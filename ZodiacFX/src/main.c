@@ -46,10 +46,9 @@
 // Global variables
 struct netif gs_net_if;
 struct zodiac_config Zodiac_Config;
-int charcount, charcount_last;
-bool masterselect;
 int portmap[4];
 int32_t ul_temp;
+bool masterselect;
 
 /** Reference voltage for AFEC,in mv. */
 #define VOLT_REF        (3300)
@@ -117,7 +116,6 @@ int main (void)
 	memset(&cCommand, 0, sizeof(cCommand));
 	memset(&cCommand_last, 0, sizeof(cCommand_last));
 	cCommand[0] = '\0';
-	charcount = 0;
 	struct ip_addr x_ip_addr, x_net_mask, x_gateway;
 	
 	sysclk_init();

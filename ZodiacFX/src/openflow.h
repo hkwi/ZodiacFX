@@ -27,71 +27,13 @@
  *
  */
 
-#ifndef OPENFLOW_H_
-#define OPENFLOW_H_
+#pragma once
 
 #include "openflow_spec/openflow_spec10.h"
 #include "openflow_spec/openflow_spec13.h"
 #include "of_helper.h"
 #include <lwip/err.h>
 #include <lwip/tcp.h>
-
-struct flows_counter
-{
-	int hitCount;
-	int bytes;
-	int duration;
-	int active;
-	int lastmatch;
-};
-
-struct table_counter
-{
-	int lookup_count;
-	int matched_count;
-};
-
-struct flow_tbl_actions
-{
-	uint8_t action1[16];
-	uint8_t action2[16];
-	uint8_t action3[16];
-	uint8_t action4[16];
-};
-
-struct oxm_header13
-{
-	uint16_t oxm_class;
-	uint8_t oxm_field;
-	uint8_t oxm_len;
-};
-
-
-void task_openflow(void);
-void nnOF_tablelookup(char *p_uc_data, uint32_t *ul_size, int port);
-void nnOF10_tablelookup(char *p_uc_data, uint32_t *ul_size, int port);
-void nnOF13_tablelookup(char *p_uc_data, uint32_t *ul_size, int port);
-void of10_message(struct ofp_header *ofph, int size, int len);
-void of13_message(struct ofp_header *ofph, int size, int len);
-void barrier10_reply(uint32_t xid);
-void barrier13_reply(uint32_t xid);
-void sendtcp(const void *buffer, u16_t len);
-void flowrem_notif(int flowid, uint8_t reason);
-	
-#define HTONS(x) ((((x) & 0xff) << 8) | (((x) & 0xff00) >> 8))
-#define NTOHS(x) HTONS(x)
-#define HTONL(x) ((((x) & 0xff) << 24) | \
-(((x) & 0xff00) << 8) | \
-(((x) & 0xff0000UL) >> 8) | \
-(((x) & 0xff000000UL) >> 24))
-#define NTOHL(x) HTONL(x)
-
-
-/* ---- kwi0 version ---- */
-
-struct flows_counter reset_counter();
-
-/* ---- kwi version ---- */
 
 #define ALIGN8(x) (x+7)/8*8
 
@@ -138,8 +80,6 @@ uint16_t ofp_rx_read(struct ofp_pcb*, void*, uint16_t);
 uint16_t ofp_tx_room(struct ofp_pcb*);
 uint16_t ofp_tx_write(struct ofp_pcb*, const void*, uint16_t);
 uint16_t ofp_set_error(const char*, uint16_t, uint16_t);
-
-uint16_t mod_ofp13_flow(struct ofp13_flow_mod*);
 
 int field_match13(const char*, int, const char*, int);
 
@@ -285,5 +225,3 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb*);
 void send_ofp13_port_status(void);
 void send_ofp13_flow_rem(void);
 void timeout_ofp13_flows(void);
-
-#endif /* OPENFLOW_H_ */
