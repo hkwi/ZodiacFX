@@ -184,8 +184,9 @@ struct fx_packet_in { // in network byte order
 };
 #define MAX_BUFFERS 16
 #define BUFFER_TIMEOUT 5000U /* ms */
-struct fx_packet_oob create_oob(struct pbuf*);
+void create_oob(struct pbuf*, struct fx_packet_oob*);
 
+// in host byte order
 struct fx_flow {
 	uint8_t send_bits; // 0=init, 0x80=active, 0x01=prepared to send_flow_rem to controller[0].
 	uint8_t table_id;
@@ -197,12 +198,13 @@ struct fx_flow {
 	const char* ops; // openflow 1.0 actions or openflow 1.3 instructions
 	struct ofp_match tuple; // openflow 1.0 12-tuple
 	uint64_t cookie;
+	uint8_t reason; // set only if send_flow_rem required
 };
-struct fx_flow_timeout {
+struct fx_flow_timeout { // in host byte order
 	uint16_t idle_timeout; // config duration
 	uint16_t hard_timeout; // config duration
-	uint32_t init; // system clock time (ms)
 	uint32_t update; // system clock time (ms)
+	uint64_t init; // system clock time (ms)
 	// Using system clock (ms) here is ok because
 	// UINT16_MAX sec is about 18 hours and
 	// UINT32_MAX ms is about 1193 hours.
@@ -214,6 +216,13 @@ struct fx_flow_count {
 };
 #define FX_FLOW_ACTIVE 0x80
 
+struct fx_port {
+	uint8_t send_bits; // for OFPPR_ADD, OFPPR_DELETE
+	uint8_t send_bits_mod; // for OFPPR_MODIFY
+	uint16_t state; // OFPPS_
+	uint16_t config; // OFPPC_
+	uint64_t init; // sys_ms; update on config change
+};
 struct fx_port_count {
 	uint64_t rx_packets;
 	uint64_t tx_packets;
@@ -227,8 +236,8 @@ struct fx_port_count {
 	uint64_t rx_over_err; // sw
 	uint64_t rx_crc_err; // sw
 	uint64_t collisions; // sw
-	uint64_t init; // sys_ms; update on config change
 };
+#define MAX_PORTS 4
 
 // in host byte order
 struct fx_meter {
@@ -264,7 +273,7 @@ struct fx_group_bucket {
 #define MAX_GROUP_BUCKETS 0
 
 void execute_fx_flow(struct fx_packet*, struct fx_packet_oob*, uint8_t);
-int lookup_fx_table(struct fx_packet*, struct fx_packet_oob*, uint8_t);
+int lookup_fx_table(const struct fx_packet*, const struct fx_packet_oob*, uint8_t);
 int match_frame_by_oxm(struct fx_packet*, struct fx_packet_oob*, const char*, uint16_t);
 int match_frame_by_tuple(struct fx_packet*, struct fx_packet_oob*, struct ofp_match);
 void execute_ofp13_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
@@ -272,5 +281,9 @@ void execute_ofp10_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
 
 enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb*);
 enum ofp_pcb_status ofp13_handle(struct ofp_pcb*);
+
+void send_ofp13_port_status(void);
+void send_ofp13_flow_rem(void);
+void timeout_ofp13_flows(void);
 
 #endif /* OPENFLOW_H_ */

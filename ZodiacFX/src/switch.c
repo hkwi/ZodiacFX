@@ -759,19 +759,13 @@ void switch_init(){
 	gmac_options_t gmac_option;
 	gmac_option.uc_copy_all_frame = 1;
 	gmac_option.uc_no_boardcast = 0;
-	gmac_option.uc_mac_addr[0] = Zodiac_Config.MAC_address[0];
-	gmac_option.uc_mac_addr[1] = Zodiac_Config.MAC_address[1];
-	gmac_option.uc_mac_addr[2] = Zodiac_Config.MAC_address[2];
-	gmac_option.uc_mac_addr[3] = Zodiac_Config.MAC_address[3];
-	gmac_option.uc_mac_addr[4] = Zodiac_Config.MAC_address[4];
-	gmac_option.uc_mac_addr[5] = Zodiac_Config.MAC_address[5];
+	memcpy(gmac_option.uc_mac_addr, Zodiac_Config.MAC_address, 6);
 	gs_gmac_dev.p_hw = GMAC;
 	/* Init GMAC driver structure */
 	gmac_dev_init(GMAC, &gs_gmac_dev, &gmac_option);
 	/* Init KSZ8795 registers */
 	switch_write(86,232);	// Set CPU interface to MII
 	switch_write(12,70);	// Turn on tail tag mode
-	disableOF();
 	/* Enable Interrupt */
 	NVIC_EnableIRQ(GMAC_IRQn);
 	
@@ -784,12 +778,7 @@ void switch_init(){
 		// unreach
 		return;
 	}
-	
-	if(Zodiac_Config.OFEnabled == OF_ENABLED){
-		enableOF();
-	}
 }
-
 
 void switch_task(struct netif *netif){	
 	struct pbuf *frame = pbuf_alloc(PBUF_RAW, GMAC_FRAME_LENTGH_MAX, PBUF_POOL);

@@ -111,7 +111,8 @@ struct fx_switch_config fx_switch = {
  */
 char ofp_buffer[OFP_BUFFER_LEN];
 
-struct fx_port_count fx_port_counts[4] = {}; // XXX: port num hardcoded
+struct fx_port fx_ports[MAX_PORTS] = {};
+struct fx_port_count fx_port_counts[MAX_PORTS] = {};
 
 struct fx_table_count fx_table_counts[MAX_TABLES] = {};
 
@@ -124,6 +125,42 @@ struct fx_flow_count fx_flow_counts[MAX_FLOWS] = {};
 
 struct fx_meter_band fx_meter_bands[MAX_METER_BANDS] = {}; // excluding slowpath, controller
 
+static void cleanup_fx_flows(){
+	int found = -1;
+	do{
+		for(int i=0; i<iLastFlow; i++){
+			if(fx_flows[i].send_bits == 0){
+				if(fx_flows[i].oxm != NULL){
+					char *buf = fx_flows[i].oxm;
+					free(buf);
+					fx_flows[i].oxm = NULL;
+				}
+				if(fx_flows[i].ops != NULL){
+					char *buf = fx_flows[i].ops;
+					free(buf);
+					fx_flows[i].ops = NULL;
+				}
+				found = i;
+				break;
+			}
+		}
+		if(found >= 0){
+			fx_flows[found] = fx_flows[iLastFlow-1];
+			iLastFlow--;
+		}
+	}while(found >= 0);
+}
+
+static void watch_fx_flows(){
+	if(OF_Version == 4){
+		timeout_ofp13_flows();
+		send_ofp13_flow_rem();
+	}else{
+		// TODO: ofp10 version should be placed here.
+	}
+	cleanup_fx_flows();
+}
+
 void execute_fx_flow(struct fx_packet *packet, struct fx_packet_oob *oob, uint8_t flow_id){
 	if(OF_Version == 4){
 		execute_ofp13_flow(packet, oob, flow_id);
@@ -132,7 +169,7 @@ void execute_fx_flow(struct fx_packet *packet, struct fx_packet_oob *oob, uint8_
 	}
 }
 
-int lookup_fx_table(struct fx_packet *packet, struct fx_packet_oob *oob, uint8_t table_id){
+int lookup_fx_table(const struct fx_packet *packet, const struct fx_packet_oob *oob, uint8_t table_id){
 	int found = -1;
 	int score = -1;
 	for(int i=0; i<iLastFlow; i++){
@@ -335,9 +372,14 @@ static enum ofp_pcb_status ofp_multipart_complete(struct ofp_pcb *self){
 }
 
 
-static enum ofp_pcb_status ofp_notify(){
-	// TODO
-	return OFP_OK;
+static void ofp_async(){
+	if(OF_Version == 4){
+		send_ofp13_flow_rem();
+		send_ofp13_port_status();
+	}else{
+		// TODO: ofp10 version should be placed here.
+	}
+	cleanup_fx_flows();
 }
 
 static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
@@ -349,10 +391,7 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 	if(OFP_OK != ret){
 		return ret;
 	}
-	ret = ofp_notify(self);
-	if(OFP_OK != ret){
-		return ret;
-	}
+	ofp_async();
 	while(ofp_rx_length(self) >= 8){
 		ret = OFP_NOOP;
 		struct ofp_header req; // look ahead
@@ -461,7 +500,7 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 		pbuf_free(head);
 	}
 	if (OFP_OK == ret){
-		return ofp_notify(self);
+		ofp_async();
 	}
 	return ret;
 }
@@ -620,6 +659,44 @@ static bool switch_negotiated(void){
 	return false;
 }
 
+#define PORT_STATUS_UPDATE_INTERVAL 1000u
+static uint32_t update_port_status_next_ms = PORT_STATUS_UPDATE_INTERVAL;
+#define PORT_COUNTS_UPDATE_INTERVAL 7000u
+static uint32_t update_port_counts_next_ms = PORT_COUNTS_UPDATE_INTERVAL;
+static uint8_t update_port_counts_next_no = 0;
+static void update_fx_ports(){
+	// Recommendation was read every 30 sec; counters are designed as "read clear".
+	if(update_port_counts_next_ms - sys_get_ms() > 0x80000000u){
+		sync_switch_port_counts(update_port_counts_next_no);
+		update_port_counts_next_no++;
+		update_port_counts_next_no %= 4;
+		update_port_counts_next_ms = sys_get_ms() + PORT_COUNTS_UPDATE_INTERVAL;
+	}
+	if(update_port_status_next_ms - sys_get_ms() > 0x80000000u){
+		for(int i=0; i<4; i++){
+			if(Zodiac_Config.of_port[i] == 1){
+				uint8_t state = get_switch_status(i);
+				if(fx_ports[i].state != state){
+					fx_ports[i].state = state;
+				
+					uint8_t send_bits = 0;
+					for(int j=0; j<MAX_CONTROLLERS; j++){
+						if(controllers[j].ofp.negotiated){
+							send_bits |= 1<<j;
+						}
+					}
+					fx_ports[i].send_bits_mod = send_bits;
+				}
+			}
+		}
+		if(OF_Version == 4){
+			send_ofp13_port_status();
+		}else{
+			// TODO:
+		}
+	}
+}
+
 void openflow_init(){
 	IP4_ADDR(&controllers[0].addr,
 		Zodiac_Config.OFIP_address[0],
@@ -652,9 +729,11 @@ void openflow_task(){
 		tcp_connect(tcp, &(c->addr), Zodiac_Config.OFPort, ofp_connected_cb);
 		c->ofp.tcp = tcp;
 	}
+	update_fx_ports();
+	watch_fx_flows();
 }
 
-struct fx_packet_oob create_oob(struct pbuf *frame){
+void create_oob(struct pbuf *frame, struct fx_packet_oob *oob){
 	uint8_t offset = 14;
 	uint16_t vlan = 0;
 	uint16_t eth_type;
@@ -665,15 +744,12 @@ struct fx_packet_oob create_oob(struct pbuf *frame){
 		vlan = (vlan & htons(0xEFFF)) | htons(0x1000); // set CFI bit for internal use
 		offset = 18;
 	}
-	struct fx_packet_oob oob = {
-		.action_set = {},
-		.action_set_oxm = NULL,
-		.action_set_oxm_length = 0,
-		.eth_offset = offset,
-		.eth_type = eth_type,
-		.vlan = vlan,
-	};
-	return oob;
+	memset(oob->action_set, 0, sizeof(const char*) * 16);
+	oob->action_set_oxm = NULL;
+	oob->action_set_oxm_length = 0;
+	oob->eth_offset = offset;
+	oob->eth_type = eth_type;
+	oob->vlan = vlan;
 }
 
 void openflow_pipeline(struct pbuf *frame, uint32_t in_port){
@@ -681,7 +757,8 @@ void openflow_pipeline(struct pbuf *frame, uint32_t in_port){
 		.data = frame,
 		.in_port = htonl(in_port),
 	};
-	struct fx_packet_oob oob = create_oob(frame);
+	struct fx_packet_oob oob;
+	create_oob(frame, &oob);
 	int flow = lookup_fx_table(&packet, &oob, 0);
 	fx_table_counts[0].lookup++;
 	if(flow < 0){
