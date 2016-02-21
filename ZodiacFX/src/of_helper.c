@@ -47,10 +47,6 @@
 extern int iLastFlow;
 extern int OF_Version;
 
-// Local Variables
-uint8_t timer_alt;
-static uint16_t VLAN_VID_MASK = 0x0fff;
-
 static inline uint64_t (htonll)(uint64_t n)
 {
 	return htonl(1) == 1 ? n : ((uint64_t) htonl(n) << 32) | htonl(n >> 32);
