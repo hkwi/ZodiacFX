@@ -238,7 +238,7 @@ static uint16_t fill_ofp13_aggregate_stats(const void *cunit, int *mp_index, voi
 		.oxm_length = ntohs(unit.match.length)-4,
 		.oxm = (void*)unit.match.oxm_fields,
 	};
-	struct ofp13_aggregate_stats_reply res = {};
+	struct ofp13_aggregate_stats_reply res = {0};
 	for(int i=filter_ofp13_flow(*mp_index, filter); i>=0; i=filter_ofp13_flow(i+1, filter)){
 		res.packet_count += fx_flow_counts[i].packet_count;
 		res.byte_count += fx_flow_counts[i].byte_count;
@@ -375,8 +375,8 @@ static uint16_t fill_ofp13_port_desc(int *mp_index, void *buffer, uint16_t capac
 }
 
 enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
-	struct ofp13_multipart_request mpreq = {};
-	struct ofp13_multipart_reply mpres = {};
+	struct ofp13_multipart_request mpreq = {0};
+	struct ofp13_multipart_reply mpres = {0};
 	memcpy(&mpreq, self->mpreq_hdr, 16);
 	memcpy(&mpres, self->mpreq_hdr, 16);
 	mpres.header.type = OFPT13_MULTIPART_REPLY;
@@ -553,7 +553,7 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 					length = 64;
 				}
 				char reply[12+64];
-				struct ofp_error_msg err = {};
+				struct ofp_error_msg err = {0};
 				err.header.version = mpreq.header.version;
 				err.header.type = OFPT13_ERROR;
 				err.header.length = htons(12+length);
@@ -576,7 +576,7 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 
 static uint16_t add_ofp13_flow(const void *creq){
 	const struct ofp13_flow_mod *req = creq;
-	if(req->table_id > OFPP13_MAX){
+	if(req->table_id > OFPTT13_MAX){
 		return ofp_set_error(req, OFPET13_FLOW_MOD_FAILED, OFPFMFC13_BAD_TABLE_ID);
 	}
 	if((req->flags & htons(OFPFF13_CHECK_OVERLAP)) != 0){
@@ -677,7 +677,7 @@ static uint16_t add_ofp13_flow(const void *creq){
 
 static uint16_t modify_ofp13_flow(const void *creq, bool strict){
 	const struct ofp13_flow_mod *req = creq;
-	if(req->table_id > OFPP13_MAX){
+	if(req->table_id > OFPTT13_MAX){
 		return ofp_set_error(req, OFPET13_FLOW_MOD_FAILED, OFPFMFC13_BAD_TABLE_ID);
 	}
 	struct ofp13_filter filter = {
@@ -900,29 +900,27 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 			int has_mask = pos[2] & 0x01;
 			switch(pos[2]>>1){
 				case OFPXMT13_OFB_IN_PORT:
-				if(memcmp(&packet->in_port, pos+4, 4)!=0){
+				if(packet->in_port != *(uint32_t*)((uintptr_t)pos + 4)){
 					return -1;
 				}
 				break;
 				
 				case OFPXMT13_OFB_IN_PHY_PORT:
-				if(memcmp(&packet->in_phy_port, pos+4, 4) != 0){
+				if(packet->in_phy_port != *(uint32_t*)((uintptr_t)pos + 4)){
 					return -1;
 				}
 				break;
 				
 				case OFPXMT13_OFB_METADATA:
 				{
-					uint64_t value;
+					uint64_t value = packet->metadata;
 					if(has_mask){
-						memcpy(&value, pos+12, 8);
-						value &= packet->metadata;
+						value &= *(uint64_t*)((uintptr_t)pos + 12);
 						count += bits_on(pos+12, 8);
 					} else {
-						value = packet->metadata;
 						count += 64;
 					}
-					if(memcmp(&value, pos+4, 8)!=0){
+					if(value != *(uint64_t*)((uintptr_t)pos + 4)){
 						return -1;
 					}
 				}
@@ -1230,6 +1228,53 @@ void check_ofp13_packet_in(){
 		if(pin->send_bits == 0){
 			pbuf_free(pin->packet.data);
 		}
+	}
+}
+
+static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const void *oxm){
+	uint8_t *data = packet->data->payload;
+	const uint8_t *o = oxm;
+	switch(*(uint32_t*)oxm){
+		// OXM_OF_IN_PORT, OXM_OF_IN_PHY_PORT not valid by spec.
+		// OXM_OF_METADATA not valid by spec.
+		case OXM_OF_ETH_DST_W:
+		for(int i=0; i<6; i++){
+			data[i] &= ~o[10+i];
+			data[i] |= o[4+i] & o[10+i];
+		}
+		break;
+		
+		case OXM_OF_ETH_DST:
+		for(int i=0; i<6; i++){
+			data[i] = o[4+i];
+		}
+		break;
+		
+		case OXM_OF_ETH_SRC_W:
+		for(int i=0; i<6; i++){
+			data[i+6] &= ~o[10+i];
+			data[i+6] |= o[4+i] & o[10+i];
+		}
+		break;
+		
+		case OXM_OF_ETH_SRC:
+		for(int i=0; i<6; i++){
+			data[i+6] = o[4+i];
+		}
+		break;
+		
+		case OXM_OF_ETH_TYPE:
+		{
+			uint16_t i = oob->eth_offset-2;
+			data[i] = o[4];
+			data[i+1] = o[5];
+			create_oob(packet->data, oob);
+		}
+		break;
+		
+		// TODO: implement more
+		
+		// OXM_OF_IPV6_EXTDR not valid by spec.
 	}
 }
 

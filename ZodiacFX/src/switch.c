@@ -216,7 +216,7 @@ void SPI_Handler(void)
 uint64_t switch_read(uint8_t addr)
 {
 	
-	uint8_t reg[2];
+	volatile uint8_t reg[2];
 	
 	if (addr < 128) {
 		reg[0] = 96;
@@ -250,7 +250,7 @@ uint64_t switch_read(uint8_t addr)
 */
 void switch_write(uint8_t addr, uint8_t value)
 {
-	uint8_t reg[3];
+	volatile uint8_t reg[3];
 	
 	if (addr < 128) {
 		reg[0] = 64;
@@ -272,7 +272,8 @@ void switch_write(uint8_t addr, uint8_t value)
 }
 
 static void switch_unreach(){
-	while(1);
+	volatile uint32_t noop = 0;
+	while(1){ noop++; }
 }
 
 extern bool disable_ofp_pipeline;
@@ -701,11 +702,12 @@ void switch_task(struct netif *netif){
 		// switch is configured to work in tail tag mode
 		frame_length--;
 		uint8_t tag = frame_buffer[frame_length];
-		struct pbuf *frame = pbuf_alloc(PBUF_RAW, frame_length, PBUF_REF);
+		struct pbuf *frame = pbuf_alloc(PBUF_RAW, frame_length, PBUF_POOL);
+		// only PBUF_POOL or RAM supported. PBUF_REF does not work for ping for example.
 		if(frame==NULL){
 			switch_unreach();
 		}
-		frame->payload = frame_buffer;
+		memcpy(frame->payload, frame_buffer, frame_length);
 		if(tag<4 && Zodiac_Config.of_port[tag]==1){ // XXX: port number hardcoded here
 			if(disable_ofp_pipeline == false){
 				fx_port_counts[tag].rx_packets++;

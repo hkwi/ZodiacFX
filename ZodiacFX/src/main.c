@@ -102,7 +102,10 @@ static void temp_init(void)
 */
 void HardFault_Handler(void)
 {
-	while(1);
+	volatile uint32_t noop = 0;
+	while(1){
+		noop++;
+	}
 }
 
 /*
@@ -191,11 +194,9 @@ int main (void)
 	openflow_init();
 	while(1)
 	{
-//		task_switch(&gs_net_if);
 		switch_task(&gs_net_if);
 		task_command(cCommand, cCommand_last);	
 		sys_check_timeouts();
 		openflow_task();
-//		task_openflow();
 	}
 }

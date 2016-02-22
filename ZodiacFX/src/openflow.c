@@ -693,6 +693,10 @@ void create_oob(struct pbuf *frame, struct fx_packet_oob *oob){
 		vlan = (vlan & htons(0xEFFF)) | htons(0x1000); // set CFI bit for internal use
 		offset = 18;
 	}
+	while(eth_type == htons(0x8100) || eth_type == htons(0x88a8)){
+		pbuf_copy_partial(frame, &eth_type, 2, offset+2);
+		offset += 4;
+	}
 	memset(oob->action_set, 0, sizeof(const char*) * 16);
 	oob->action_set_oxm = NULL;
 	oob->action_set_oxm_length = 0;
@@ -724,8 +728,8 @@ void openflow_pipeline(struct pbuf *frame, uint32_t in_port){
 	fx_flow_counts[flow].byte_count+=frame->tot_len;
 	fx_flow_timeouts[flow].update = sys_get_ms();
 	if(OF_Version == 4){
-		execute_ofp13_flow(packet, oob, flow_id);
+		execute_ofp13_flow(&packet, &oob, flow);
 	} else if(OF_Version == 1){
-		execute_ofp10_flow(packet, oob, flow_id);
+		execute_ofp10_flow(&packet, &oob, flow);
 	}
 }
