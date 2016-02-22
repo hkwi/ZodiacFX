@@ -271,6 +271,10 @@ void switch_write(uint8_t addr, uint8_t value)
 	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
 }
 
+static void switch_unreach(){
+	while(1);
+}
+
 extern bool disable_ofp_pipeline;
 /*
 *	Disable OpenFlow functionality
@@ -428,22 +432,18 @@ void update_port_status(void)
 *	@param port - the port to send the data out from.
 *
 */
-void gmac_write(uint8_t *p_buffer, uint16_t ul_size, uint8_t port)
-{	
+void gmac_write(const void *buffer, uint16_t ul_size, uint8_t port){
 	// Add padding
 	// switch discards frames less than 64 bytes
-	if (ul_size < 60) 
-	{
+	if (ul_size < 60){
 		memset(gmacbuffer, 0, 61);
-		memcpy(gmacbuffer, p_buffer, ul_size);
-		uint8_t *last_byte;
-		last_byte = gmacbuffer + 60;
+		memcpy(gmacbuffer, buffer, ul_size);
+		uint8_t *last_byte = (uintptr_t)gmacbuffer + 60;
 		*last_byte = port;
 		gmac_dev_write(&gs_gmac_dev, gmacbuffer, 61, NULL);
 	} else {
-		memcpy(gmacbuffer, p_buffer, ul_size);
-		uint8_t *last_byte;
-		last_byte = gmacbuffer + ul_size;
+		memcpy(gmacbuffer, buffer, ul_size);
+		uint8_t *last_byte = (uintptr_t)gmacbuffer + ul_size;
 		*last_byte = port;
 		gmac_dev_write(&gs_gmac_dev, gmacbuffer, (ul_size + 1), NULL);
 	}
@@ -669,7 +669,12 @@ void switch_init(){
 	gmac_dev_init(GMAC, &gs_gmac_dev, &gmac_option);
 	/* Init KSZ8795 registers */
 	switch_write(86,232);	// Set CPU interface to MII
-	switch_write(12,70);	// Turn on tail tag mode
+	switch_write(12, 0x46);	// Turn on tail tag mode
+	// CPU(port5) controls the traffic
+	switch_write(21, 0x03);
+	switch_write(37, 0x03);
+	switch_write(53, 0x03);
+	switch_write(69, 0x03);
 	/* Enable Interrupt */
 	NVIC_EnableIRQ(GMAC_IRQn);
 	
@@ -684,21 +689,23 @@ void switch_init(){
 	}
 }
 
-void switch_task(struct netif *netif){	
-	struct pbuf *frame = pbuf_alloc(PBUF_RAW, GMAC_FRAME_LENTGH_MAX, PBUF_POOL);
+void switch_task(struct netif *netif){
+	uint8_t frame_buffer[GMAC_FRAME_LENTGH_MAX];
 	// PBUF_ROM or PBUF_REF fails with ICMP handling: not yet implemented in LWIP.
 	uint32_t frame_length;
 
 	// XXX: gmac_dev_read as gmac_low_level_input, may return pbuf chain directly here.
 	// XXX: lwip expects frame header structures are all placed in the pbuf first chunk.
 	// XXX: and openflow pipeline will expect this as well.
-	if (GMAC_OK == gmac_dev_read(&gs_gmac_dev, (uint8_t *)frame->payload, GMAC_FRAME_LENTGH_MAX, &frame_length)){
+	if (GMAC_OK == gmac_dev_read(&gs_gmac_dev, frame_buffer, GMAC_FRAME_LENTGH_MAX, &frame_length)){
 		// switch is configured to work in tail tag mode
 		frame_length--;
-		uint8_t tag;
-		pbuf_copy_partial(frame, &tag, 1, frame_length);
-		
-		pbuf_realloc(frame, frame_length);
+		uint8_t tag = frame_buffer[frame_length];
+		struct pbuf *frame = pbuf_alloc(PBUF_RAW, frame_length, PBUF_REF);
+		if(frame==NULL){
+			switch_unreach();
+		}
+		frame->payload = frame_buffer;
 		if(tag<4 && Zodiac_Config.of_port[tag]==1){ // XXX: port number hardcoded here
 			if(disable_ofp_pipeline == false){
 				fx_port_counts[tag].rx_packets++;
@@ -707,7 +714,7 @@ void switch_task(struct netif *netif){
 		} else{
 			netif->input(frame, netif);
 		}
+		pbuf_free(frame);
 	}
-	pbuf_free(frame);
 	return;
 }

@@ -61,34 +61,31 @@ static inline uint64_t (htonll)(uint64_t n)
 *	@param iphdr_offset - IP Header offset.
 *	
 */
-void set_ip_checksum(char *p_uc_data, int packet_size, int iphdr_offset)
+void set_ip_checksum(void *p_uc_data, uint16_t packet_size, uint16_t iphdr_offset)
 {
-	struct ip_hdr *iphdr;
-	struct tcp_hdr *tcphdr;
-	struct udp_hdr *udphdr;
-	int payload_offset;
-	
-	iphdr = (struct ip_hdr*)(p_uc_data + iphdr_offset);
-	payload_offset = iphdr_offset + IPH_HL(iphdr)*4;
-	struct pbuf *p = pbuf_alloc(PBUF_RAW, packet_size - payload_offset, PBUF_ROM);
-	p->payload = p_uc_data + payload_offset;
+	struct ip_hdr *iphdr = (void*)((uintptr_t)p_uc_data + iphdr_offset);
+	struct ip_addr src = {
+		.addr = iphdr->src.addr,
+	};
+	struct ip_addr dst = {
+		.addr = iphdr->dest.addr,
+	};
+	uint16_t payload_offset = iphdr_offset + IPH_HL(iphdr)*4;
+	struct pbuf *p = pbuf_alloc(PBUF_RAW, packet_size - payload_offset, PBUF_REF);
+	p->payload = (void*)((uintptr_t)p_uc_data + payload_offset);
 	if (IPH_PROTO(iphdr) == IP_PROTO_TCP) {
-		tcphdr = (struct tcp_hdr*)(p_uc_data + payload_offset);
+		struct tcp_hdr *tcphdr = (void*)((uintptr_t)p_uc_data + payload_offset);
 		tcphdr->chksum = 0;
-		tcphdr->chksum = inet_chksum_pseudo(p,
-		(ip_addr_t*)&(iphdr->src),
-		(ip_addr_t*)&(iphdr->dest),
-		IP_PROTO_TCP,
-		packet_size - payload_offset);
+		tcphdr->chksum = inet_chksum_pseudo(p, &src, &dst, 
+			IP_PROTO_TCP,
+			packet_size - payload_offset);
 	}
 	if (IPH_PROTO(iphdr) == IP_PROTO_UDP) {
-		udphdr = (struct udp_hdr*)(p_uc_data + payload_offset);
+		struct udp_hdr *udphdr = (void*)((uintptr_t)p_uc_data + payload_offset);
 		udphdr->chksum = 0;
-		udphdr->chksum = inet_chksum_pseudo(p,
-		(ip_addr_t*)&(iphdr->src),
-		(ip_addr_t*)&(iphdr->dest),
-		IP_PROTO_UDP,
-		packet_size - payload_offset);
+		udphdr->chksum = inet_chksum_pseudo(p, &src, &dst,
+			IP_PROTO_UDP,
+			packet_size - payload_offset);
 	}
 	pbuf_free(p);
 	
@@ -115,20 +112,19 @@ void set_ip_checksum(char *p_uc_data, int packet_size, int iphdr_offset)
 #define PREREQ_IP_MASK (PREREQ_IPV4 | PREREQ_IPV6)
 #define PREREQ_ND_MASK (PREREQ_ND_SLL | PREREQ_ND_TLL)
 
-static uint32_t match_prereq(const char *oxm, int length)
+static uint32_t match_prereq(const void *oxms, int length)
 {
 	uint32_t ret = 0;
-	const char *hdr = oxm;
-	while(hdr < oxm+length){
-		uint16_t eth_type;
-		uint32_t field = ntohl(*(uint32_t*)(hdr));
+	uintptr_t hdr = (uintptr_t)oxms;
+	while(hdr < (uintptr_t)oxms+length){
+		const uint8_t *oxm = (const uint8_t*)hdr;
+		const uint32_t field = ntohl(*(const uint32_t*)hdr);
 		switch(field){
 			case OXM_OF_VLAN_PCP:
 				ret |= PREREQ_VLAN;
 				break;
 			case OXM_OF_ETH_TYPE:
-				memcpy(&eth_type, hdr+4, 2); eth_type = ntohs(eth_type);
-				switch(eth_type){
+				switch(ntohs(*(uint16_t*)(hdr+4))){
 					case 0x0800:
 						if ((ret & PREREQ_IP_MASK) == PREREQ_IPV6){
 							ret |= PREREQ_INVALID;
@@ -154,7 +150,7 @@ static uint32_t match_prereq(const char *oxm, int length)
 				}
 				break;
 			case OXM_OF_IP_PROTO:
-				switch(hdr[4]){
+				switch(oxm[4]){
 					case 1:
 						ret |= PREREQ_ICMPV4;
 						break;
@@ -176,7 +172,7 @@ static uint32_t match_prereq(const char *oxm, int length)
 				}
 				break;
 			case OXM_OF_ICMPV6_TYPE:
-				switch(hdr[4]){
+				switch(oxm[4]){
 					case 135:
 						if ((ret & PREREQ_ND_MASK) == PREREQ_ND_TLL){
 							ret |= PREREQ_INVALID;
@@ -316,12 +312,12 @@ static uint32_t match_prereq(const char *oxm, int length)
 /*
  *	compares two oxm sequence.
  */
-bool oxm_strict_equals(const char *oxm_a, int len_a, const char *oxm_b, int len_b){
+bool oxm_strict_equals(const void *oxm_a, int len_a, const void *oxm_b, int len_b){
 	int count_a = 0;
-	for(const char *pos_a=oxm_a; pos_a < oxm_a+len_a; pos_a+=4+(uint8_t)pos_a[3]){
+	for(const uint8_t *pos_a=oxm_a; pos_a < (const uint8_t*)oxm_a+len_a; pos_a += 4+pos_a[3]){
 		bool miss = true;
-		for(const char *pos_b=oxm_b; pos_b < oxm_b+len_b; pos_b+=4+(uint8_t)pos_b[3]){
-			if(pos_a[3] == pos_b[3] && memcmp(pos_a, pos_b, (uint8_t)pos_a[3]) == 0){
+		for(const uint8_t *pos_b=oxm_b; pos_b < (const uint8_t*)oxm_b+len_b; pos_b += 4+pos_b[3]){
+			if(pos_a[3] == pos_b[3] && memcmp(pos_a, pos_b, pos_a[3]) == 0){
 				miss = false;
 				break;
 			}
@@ -331,7 +327,7 @@ bool oxm_strict_equals(const char *oxm_a, int len_a, const char *oxm_b, int len_
 		}
 		count_a++;
 	}
-	for(const char *pos_b=oxm_b; pos_b < oxm_b+len_b; pos_b+=4+(uint8_t)pos_b[3]){
+	for(const uint8_t *pos_b=oxm_b; pos_b < (const uint8_t*)oxm_b+len_b; pos_b+=4+pos_b[3]){
 		count_a--;
 	}
 	if(count_a==0){
@@ -348,43 +344,45 @@ bool oxm_strict_equals(const char *oxm_a, int len_a, const char *oxm_b, int len_
 *	@param *match_b - pointer to the second match field
 *
 */
-int field_match13(const char *oxm_a, int len_a, const char *oxm_b, int len_b){
+int field_match13(const void *oxm_a, int len_a, const void *oxm_b, int len_b){
 	uint32_t prereq_a = match_prereq(oxm_a, len_a);
 	if ((prereq_a & PREREQ_INVALID) != 0){
 		return 0;
 	}
-	const char *bhdr = oxm_b;
-	while(bhdr < oxm_b + len_b){
-		uint32_t bfield; memcpy(&bfield, bhdr, 4); bfield=ntohl(bfield);
-		const char *ahdr = oxm_a;
-		while(ahdr < oxm_a + len_a){
-			uint32_t afield; memcpy(&afield, ahdr, 4); afield=ntohl(afield);
+	uintptr_t bhdr = (uintptr_t)oxm_b;
+	while(bhdr < (uintptr_t)oxm_b + len_b){
+		uint32_t bfield = ntohl(*(uint32_t*)bhdr);
+		uintptr_t ahdr = (uintptr_t)oxm_a;
+		while(ahdr < (uintptr_t)oxm_a + len_a){
+			uint32_t afield = ntohl(*(uint32_t*)ahdr);
+			const uint8_t *a = (const void*)ahdr;
+			const uint8_t *b = (const void*)bhdr;
 			if(bfield == afield) {
 				if(OXM_HASMASK(bfield)){
 					int length = OXM_LENGTH(bfield)/2;
 					if(OXM_HASMASK(afield)){
 						for(int i=0; i<length; i++){
-							if ((~ahdr[4+length+i] & bhdr[4+length+i]) != 0){
+							if ((a[4+length+i] & b[4+length+i]) != a[4+length+i]){
 								return 0;
 							}
 						}
 					}
 					for(int i=0; i<length; i++){
-						if ((ahdr[4+i] & bhdr[4+length+i]) != bhdr[4+i]){
+						if ((a[4+i] & b[4+length+i]) != b[4+i]){
 							return 0;
 						}
 					}
 					break;
-				}else if (memcmp(ahdr+4, bhdr+4, OXM_LENGTH(bfield))==0){
+				}else if (memcmp(a+4, b+4, OXM_LENGTH(bfield))==0){
 					break;
 				}else{
 					return 0;
 				}
 			}
 			switch(bfield){
-				uint16_t eth_type;
 				case OXM_OF_ETH_TYPE:
-					memcpy(&eth_type, bhdr+4, 2); eth_type = ntohs(eth_type);
+				{
+					uint16_t eth_type = ntohs(*(uint16_t*)(bhdr+4));
 					switch (eth_type){
 						case 0x0800:
 							if ((prereq_a & (PREREQ_ARP | PREREQ_MPLS | PREREQ_PBB)) != 0){
@@ -393,7 +391,8 @@ int field_match13(const char *oxm_a, int len_a, const char *oxm_b, int len_b){
 							if ((prereq_a & PREREQ_ETH_TYPE_MASK) == PREREQ_IPV6){
 								return 0;
 							}
-							break;
+						break;
+						
 						case 0x86dd:
 							if ((prereq_a & (PREREQ_ARP | PREREQ_MPLS | PREREQ_PBB)) != 0){
 								return 0;
@@ -401,27 +400,32 @@ int field_match13(const char *oxm_a, int len_a, const char *oxm_b, int len_b){
 							if ((prereq_a & PREREQ_ETH_TYPE_MASK) == PREREQ_IPV4){
 								return 0;
 							}
-							break;
+						break;
+						
 						case 0x0806:
 							if ((prereq_a & PREREQ_ETH_TYPE_MASK & ~PREREQ_ARP) != 0) {
 								return 0;
 							}
-							break;
+						break;
+						
 						case 0x8847:
 						case 0x8848:
 							if ((prereq_a & PREREQ_ETH_TYPE_MASK & ~PREREQ_MPLS) != 0) {
 								return 0;
 							}
-							break;
+						break;
+						
 						case 0x88e7:
 							if ((prereq_a & PREREQ_ETH_TYPE_MASK & ~PREREQ_PBB) != 0) {
 								return 0;
 							}
-							break;
+						break;
 					}
-					break;
+				}
+				break;
+				
 				case OXM_OF_IP_PROTO:
-					switch(bhdr[4]){
+					switch(b[4]){
 						case 1:
 							if ((prereq_a & PREREQ_IP_PROTO_MASK & ~PREREQ_ICMPV4) != 0) {
 								return 0;
@@ -450,7 +454,7 @@ int field_match13(const char *oxm_a, int len_a, const char *oxm_b, int len_b){
 					}
 					break;
 				case OXM_OF_ICMPV6_TYPE:
-					switch(bhdr[4]){
+					switch(b[4]){
 						case 135:
 							if ((prereq_a & PREREQ_ND_MASK & ~PREREQ_ND_SLL) != 0){
 								return 0;
@@ -480,8 +484,8 @@ int field_match13(const char *oxm_a, int len_a, const char *oxm_b, int len_b){
 		return 0;
 	}
 	if ((prereq_b & PREREQ_VLAN) != 0) {
-		const char *ahdr = oxm_a;
-		while(ahdr < oxm_a + len_a){
+		uintptr_t ahdr = (uintptr_t)oxm_a;
+		while(ahdr < (uintptr_t)oxm_a + len_a){
 			uint32_t afield = *(uint32_t*)(ahdr);
 			switch(afield){
 				case OXM_OF_VLAN_VID_W:

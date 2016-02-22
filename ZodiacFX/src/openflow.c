@@ -81,33 +81,34 @@ struct fx_flow_count fx_flow_counts[MAX_FLOWS] = {};
 
 struct fx_meter_band fx_meter_bands[MAX_METER_BANDS] = {}; // excluding slowpath, controller
 
-static void cleanup_fx_flows(){
-	int found = -1;
+static void cleanup_fx_flows(void){
+	int found;
 	do{
+		found = -1;
 		for(int i=0; i<iLastFlow; i++){
 			if(fx_flows[i].send_bits == 0){
 				if(fx_flows[i].oxm != NULL){
-					char *buf = fx_flows[i].oxm;
-					free(buf);
+					free(fx_flows[i].oxm);
 					fx_flows[i].oxm = NULL;
 				}
 				if(fx_flows[i].ops != NULL){
-					char *buf = fx_flows[i].ops;
-					free(buf);
+					free(fx_flows[i].ops);
 					fx_flows[i].ops = NULL;
 				}
 				found = i;
 				break;
 			}
 		}
-		if(found >= 0){
+		if(found >= 0 && iLastFlow>0){
 			fx_flows[found] = fx_flows[iLastFlow-1];
 			iLastFlow--;
+		}else{
+			break;
 		}
 	}while(found >= 0);
 }
 
-static void watch_fx_flows(){
+static void watch_fx_flows(void){
 	if(OF_Version == 4){
 		timeout_ofp13_flows();
 		send_ofp13_flow_rem();
@@ -115,14 +116,6 @@ static void watch_fx_flows(){
 		// TODO: ofp10 version should be placed here.
 	}
 	cleanup_fx_flows();
-}
-
-void execute_fx_flow(struct fx_packet *packet, struct fx_packet_oob *oob, uint8_t flow_id){
-	if(OF_Version == 4){
-		execute_ofp13_flow(packet, oob, flow_id);
-	} else if(OF_Version == 1){
-		execute_ofp10_flow(packet, oob, flow_id);
-	}
 }
 
 int lookup_fx_table(const struct fx_packet *packet, const struct fx_packet_oob *oob, uint8_t table_id){
@@ -152,10 +145,11 @@ int lookup_fx_table(const struct fx_packet *packet, const struct fx_packet_oob *
 
 static void ofp_unreach(void){
 	// for breakpoint
-	while(1);
+	volatile uint32_t hook;
+	while(1){ hook++; }
 }
 
-uint16_t ofp_rx_length(struct ofp_pcb *self){
+uint16_t ofp_rx_length(const struct ofp_pcb *self){
 	if(self->rbuf == NULL) return 0;
 	return self->rbuf->tot_len - self->rskip;
 }
@@ -176,7 +170,7 @@ uint16_t ofp_rx_read(struct ofp_pcb *self, void *buf, uint16_t capacity){
 	return ret;
 }
 
-uint16_t ofp_tx_room(struct ofp_pcb *pcb){
+uint16_t ofp_tx_room(const struct ofp_pcb *pcb){
 	return tcp_sndbuf(pcb->tcp);
 }
 
@@ -218,7 +212,7 @@ static err_t ofp_close(struct ofp_pcb *self, uint32_t sleep){
 /*
  * prepares ofp_error_msg in ofp_buffer
  */
-uint16_t ofp_set_error(const char *req, uint16_t ofpet, uint16_t ofpec){
+uint16_t ofp_set_error(const void *req, uint16_t ofpet, uint16_t ofpec){
 	struct ofp_header hdr;
 	memcpy(&hdr, req, 8);
 	uint16_t length = ntohs(hdr.length);
@@ -328,10 +322,11 @@ static enum ofp_pcb_status ofp_multipart_complete(struct ofp_pcb *self){
 }
 
 
-static void ofp_async(){
+static void ofp_async(void){
 	if(OF_Version == 4){
 		send_ofp13_flow_rem();
 		send_ofp13_port_status();
+		check_ofp13_packet_in();
 	}else{
 		// TODO: ofp10 version should be placed here.
 	}
@@ -472,17 +467,15 @@ static err_t ofp_poll_cb(void *arg, struct tcp_pcb *pcb){
 	}
 	if(ofp->negotiated && ofp->next_ping - sys_get_ms() > 0x80000000U){
 		ofp->next_ping = sys_get_ms() + OFP_PING_INTERVAL;
-		/*
-		if(ofp->mpreq_pos == 0 && ofp_tx_room(ofp) > 8) {
+		if(ofp_tx_room(ofp) > 8) {
 			struct ofp_header hdr;
 			hdr.version = OF_Version;
 			hdr.type = OFPT10_ECHO_REQUEST;
 			hdr.length = htons(8);
 			hdr.xid = htonl(ofp->xid++);
-			ofp_tx_write(ofp, (char*)&hdr, 8);
+			ofp_tx_write(ofp, &hdr, 8);
 			return tcp_output(ofp->tcp);
 		}
-		*/
 	}
 	return ERR_OK;
 }
@@ -620,7 +613,7 @@ static uint32_t update_port_status_next_ms = PORT_STATUS_UPDATE_INTERVAL;
 #define PORT_COUNTS_UPDATE_INTERVAL 7000u
 static uint32_t update_port_counts_next_ms = PORT_COUNTS_UPDATE_INTERVAL;
 static uint8_t update_port_counts_next_no = 0;
-static void update_fx_ports(){
+static void update_fx_ports(void){
 	// Recommendation was read every 30 sec; counters are designed as "read clear".
 	if(update_port_counts_next_ms - sys_get_ms() > 0x80000000u){
 		sync_switch_port_counts(update_port_counts_next_no);
@@ -709,6 +702,9 @@ void create_oob(struct pbuf *frame, struct fx_packet_oob *oob){
 }
 
 void openflow_pipeline(struct pbuf *frame, uint32_t in_port){
+	if(frame->tot_len == 0){
+		return;
+	}
 	struct fx_packet packet = {
 		.data = frame,
 		.in_port = htonl(in_port),
@@ -727,5 +723,9 @@ void openflow_pipeline(struct pbuf *frame, uint32_t in_port){
 	fx_flow_counts[flow].packet_count++;
 	fx_flow_counts[flow].byte_count+=frame->tot_len;
 	fx_flow_timeouts[flow].update = sys_get_ms();
-	execute_fx_flow(&packet, &oob, flow);
+	if(OF_Version == 4){
+		execute_ofp13_flow(packet, oob, flow_id);
+	} else if(OF_Version == 1){
+		execute_ofp10_flow(packet, oob, flow_id);
+	}
 }

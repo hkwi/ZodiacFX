@@ -75,13 +75,13 @@ struct controller {
 void openflow_init(void);
 void openflow_task(void);
 void openflow_pipeline(struct pbuf*, uint32_t);
-uint16_t ofp_rx_length(struct ofp_pcb*);
+uint16_t ofp_rx_length(const struct ofp_pcb*);
 uint16_t ofp_rx_read(struct ofp_pcb*, void*, uint16_t);
-uint16_t ofp_tx_room(struct ofp_pcb*);
+uint16_t ofp_tx_room(const struct ofp_pcb*);
 uint16_t ofp_tx_write(struct ofp_pcb*, const void*, uint16_t);
-uint16_t ofp_set_error(const char*, uint16_t, uint16_t);
+uint16_t ofp_set_error(const void*, uint16_t, uint16_t);
 
-int field_match13(const char*, int, const char*, int);
+int field_match13(const void*, int, const void*, int);
 
 struct fx_switch_config {
 	uint16_t flags;
@@ -109,8 +109,8 @@ struct fx_packet_oob { // in network byte order
 	uint16_t eth_offset;
 	// pipeline
 	uint16_t action_set_oxm_length; // in host byte order
-	const char* action_set_oxm; // malloc-ed oxm
-	const char* action_set[16]; // just reference to ofp_action inside fx_flow.ops
+	void *action_set_oxm; // malloc-ed oxm
+	void *action_set[16]; // just reference to ofp_action inside fx_flow.ops
 };
 struct fx_packet_in { // in network byte order
 	uint8_t send_bits; // controller bitmap supporting up to 7 controllers now. 0x80 is for packet_out
@@ -134,8 +134,8 @@ struct fx_flow {
 	uint16_t flags;
 	uint16_t oxm_length;
 	uint16_t ops_length;
-	const char* oxm;
-	const char* ops; // openflow 1.0 actions or openflow 1.3 instructions
+	void *oxm;
+	void *ops; // openflow 1.0 actions or openflow 1.3 instructions
 	struct ofp_match tuple; // openflow 1.0 12-tuple
 	uint64_t cookie;
 	uint8_t reason; // set only if send_flow_rem required
@@ -207,21 +207,24 @@ struct fx_group_bucket {
 	uint32_t watch_port;
 	uint32_t watch_group;
 	uint16_t actions_len;
-	const char* actions;
+	void *actions;
 };
 #define MAX_GROUPS 0
 #define MAX_GROUP_BUCKETS 0
 
-void execute_fx_flow(struct fx_packet*, struct fx_packet_oob*, uint8_t);
-int lookup_fx_table(const struct fx_packet*, const struct fx_packet_oob*, uint8_t);
-int match_frame_by_oxm(struct fx_packet*, struct fx_packet_oob*, const char*, uint16_t);
-int match_frame_by_tuple(struct fx_packet*, struct fx_packet_oob*, struct ofp_match);
-void execute_ofp13_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
-void execute_ofp10_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
-
+// openflow message handling
 enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb*);
 enum ofp_pcb_status ofp13_handle(struct ofp_pcb*);
 
+// flow processing
+int lookup_fx_table(const struct fx_packet*, const struct fx_packet_oob*, uint8_t);
+int match_frame_by_oxm(const struct fx_packet*, const struct fx_packet_oob*, const void*, uint16_t);
+int match_frame_by_tuple(const struct fx_packet*, const struct fx_packet_oob*, struct ofp_match);
+void execute_ofp13_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
+void execute_ofp10_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
+
+// async
 void send_ofp13_port_status(void);
 void send_ofp13_flow_rem(void);
 void timeout_ofp13_flows(void);
+void check_ofp13_packet_in(void);

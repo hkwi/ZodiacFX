@@ -77,7 +77,7 @@ static void afec_temp_sensor_end_conversion(void)
 *	Inialise the temp sensor
 *
 */
-void temp_init(void)
+static void temp_init(void)
 {
 	afec_enable(AFEC0);
 	struct afec_config afec_cfg;
