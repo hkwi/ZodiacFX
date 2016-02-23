@@ -205,6 +205,17 @@ void SPI_Handler(void)
 	return;
 }
 
+static void encode_spi_reg01(bool read, uint8_t addr, uint8_t *reg){
+	reg[0] = 0x40;
+	if(read){
+		reg[0] |= 0x20;
+	}
+	if(addr & 0x80){
+		reg[0] |= 0x01;
+	}
+	reg[1] = addr<<1;
+}
+
 /*
 *	Read from the switch registers
 *
@@ -215,15 +226,12 @@ void SPI_Handler(void)
 */
 uint64_t switch_read(uint8_t addr)
 {
-	
-	volatile uint8_t reg[2];
-	
+	uint8_t reg[2];
 	if (addr < 128) {
 		reg[0] = 96;
 	} else {
 		reg[0] = 97;
 	}
-	
 	reg[1] = addr << 1;
 
 	/* Select the DF memory to check. */
@@ -246,18 +254,16 @@ uint64_t switch_read(uint8_t addr)
 *
 * SPI write cycle
 *      |         reg[0]        |         reg[1]        |         reg[2]        |
-* S_DI | 0  1  1 __ __ __ __ A7 A6 A5 A4 A3 A2 A1 A0 TR D7 D6 D5 D4 D3 D2 D1 D0
+* S_DI | 0  1  0 __ __ __ __ A7 A6 A5 A4 A3 A2 A1 A0 TR D7 D6 D5 D4 D3 D2 D1 D0
 */
 void switch_write(uint8_t addr, uint8_t value)
 {
-	volatile uint8_t reg[3];
-	
+	uint8_t reg[3];
 	if (addr < 128) {
 		reg[0] = 64;
 	} else {
 		reg[0] = 65;
 	}
-	
 	reg[1] = addr << 1;
 	reg[2] = value;
 	
@@ -271,7 +277,7 @@ void switch_write(uint8_t addr, uint8_t value)
 	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
 }
 
-static void switch_unreach(){
+static void switch_unreach(void){
 	volatile uint32_t noop = 0;
 	while(1){ noop++; }
 }
@@ -439,12 +445,12 @@ void gmac_write(const void *buffer, uint16_t ul_size, uint8_t port){
 	if (ul_size < 60){
 		memset(gmacbuffer, 0, 61);
 		memcpy(gmacbuffer, buffer, ul_size);
-		uint8_t *last_byte = (uintptr_t)gmacbuffer + 60;
+		uint8_t *last_byte = (void*)((uintptr_t)gmacbuffer + 60);
 		*last_byte = port;
 		gmac_dev_write(&gs_gmac_dev, gmacbuffer, 61, NULL);
 	} else {
 		memcpy(gmacbuffer, buffer, ul_size);
-		uint8_t *last_byte = (uintptr_t)gmacbuffer + ul_size;
+		uint8_t *last_byte = (void*)((uintptr_t)gmacbuffer + ul_size);
 		*last_byte = port;
 		gmac_dev_write(&gs_gmac_dev, gmacbuffer, (ul_size + 1), NULL);
 	}
@@ -581,75 +587,185 @@ uint32_t get_switch_ofppf13_peer(uint32_t port){
 
 extern struct fx_port_count fx_port_counts[4];
 void sync_switch_port_counts(uint8_t port_index){
-	switch_write(110, 0x1d); // write, MIB, 0x1??
-	switch_write(111, 4*port_index); // 0x100, 0x104, ... indirect address
-	fx_port_counts[port_index].rx_bytes += (
-		((switch_read(116) & 0x0f)<<32)
-		+ (switch_read(117)<<24)
-		+ (switch_read(118)<<16)
-		+ (switch_read(119)<<8)
-		+ switch_read(120));
+	uint8_t txreg[4];
+	uint8_t rxreg[5];
 	
-	switch_write(110, 0x1d);
-	switch_write(111, 4*port_index + 1);
-	fx_port_counts[port_index].tx_bytes += (
-		((switch_read(116) & 0x0f)<<32)
-		+ (switch_read(117)<<24)
-		+ (switch_read(118)<<16)
-		+ (switch_read(119)<<8)
-		+ switch_read(120));
+	// switch_write(110, 0x1d); // write, MIB, 0x1??
+	// switch_write(111, 4*port_index); // 0x100, 0x104, ... indirect address
+	//fx_port_counts[port_index].rx_bytes += (
+	//((switch_read(116) & 0x0f)<<32)
+	//+ (switch_read(117)<<24)
+	//+ (switch_read(118)<<16)
+	//+ (switch_read(119)<<8)
+	//+ switch_read(120));
+	encode_spi_reg01(false, 110, txreg);
+	txreg[2] = 0x1d;
+	txreg[3] = 4*port_index;
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	encode_spi_reg01(true, 116, txreg);
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 2);
+	usart_spi_read_packet(USART_SPI, rxreg, 5);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	fx_port_counts[port_index].rx_bytes += (
+		(((uint64_t)rxreg[0] & 0x0f)<<32)
+		+ ((uint64_t)rxreg[1]<<24)
+		+ ((uint64_t)rxreg[2]<<16)
+		+ ((uint64_t)rxreg[3]<<8)
+		+ (uint64_t)rxreg[4]);
+	
+	//switch_write(110, 0x1d);
+	//switch_write(111, 4*port_index + 1);
+	//fx_port_counts[port_index].tx_bytes += (
+		//((switch_read(116) & 0x0f)<<32)
+		//+ (switch_read(117)<<24)
+		//+ (switch_read(118)<<16)
+		//+ (switch_read(119)<<8)
+		//+ switch_read(120));
+	encode_spi_reg01(false, 110, txreg);
+	txreg[2] = 0x1d;
+	txreg[3] = 4*port_index + 1;
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	encode_spi_reg01(true, 116, txreg);
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 2);
+	usart_spi_read_packet(USART_SPI, rxreg, 5);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	fx_port_counts[port_index].tx_bytes += (((uint64_t)rxreg[0] & 0x0f)<<32) + htonl(*(uint32_t*)((uintptr_t)rxreg+1));
 
-	switch_write(110, 0x1d);
-	switch_write(111, 4*port_index + 2);
-	fx_port_counts[port_index].rx_dropped += (
-		+ (switch_read(119)<<8)
-		+ switch_read(120));
+	//switch_write(110, 0x1d);
+	//switch_write(111, 4*port_index + 2);
+	//fx_port_counts[port_index].rx_dropped += (
+		//+ (switch_read(119)<<8)
+		//+ switch_read(120));
+	encode_spi_reg01(false, 110, txreg);
+	txreg[2] = 0x1d;
+	txreg[3] = 4*port_index + 2;
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	encode_spi_reg01(true, 119, txreg);
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 2);
+	usart_spi_read_packet(USART_SPI, rxreg, 2);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	fx_port_counts[port_index].rx_dropped += ntohs(*(uint16_t*)(uintptr_t)rxreg);
 
-	switch_write(110, 0x1d);
-	switch_write(111, 4*port_index + 3);
-	fx_port_counts[port_index].tx_dropped += (
-		+ (switch_read(119)<<8)
-		+ switch_read(120));
+	//switch_write(110, 0x1d);
+	//switch_write(111, 4*port_index + 3);
+	//fx_port_counts[port_index].tx_dropped += (
+		//+ (switch_read(119)<<8)
+		//+ switch_read(120));
+	encode_spi_reg01(false, 110, txreg);
+	txreg[2] = 0x1d;
+	txreg[3] = 4*port_index + 3;
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	encode_spi_reg01(true, 119, txreg);
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 2);
+	usart_spi_read_packet(USART_SPI, rxreg, 2);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	fx_port_counts[port_index].tx_dropped += ntohs(*(uint16_t*)(uintptr_t)rxreg);
 
 	uint64_t rx_err_sum = 0;
 	uint64_t rx_err = 0;
 	
-	switch_write(110, 0x1c);
-	switch_write(111, 0x7 + 0x20*port_index);
-	rx_err = (((switch_read(117) & 0x1f)<<24)
-		+ (switch_read(118)<<16)
-		+ (switch_read(119)<<8)
-		+ switch_read(120));
+	//switch_write(110, 0x1c);
+	//switch_write(111, 0x7 + 0x20*port_index);
+	//rx_err = (((switch_read(117) & 0x1f)<<24)
+		//+ (switch_read(118)<<16)
+		//+ (switch_read(119)<<8)
+		//+ switch_read(120));
+	//fx_port_counts[port_index].rx_frame_err += rx_err;
+	//rx_err_sum += rx_err;
+	encode_spi_reg01(false, 110, txreg);
+	txreg[2] = 0x1c;
+	txreg[3] = 0x7 + 0x20*port_index;
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	encode_spi_reg01(true, 117, txreg);
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 2);
+	usart_spi_read_packet(USART_SPI, rxreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	rx_err = ntohl(*(uint32_t*)(uintptr_t)rxreg) & 0x1fffffff;
 	fx_port_counts[port_index].rx_frame_err += rx_err;
 	rx_err_sum += rx_err;
 	
-	switch_write(110, 0x1c);
-	switch_write(111, 0x3 + 0x20*port_index);
-	rx_err = (((switch_read(117) & 0x1f)<<24)
-		+ (switch_read(118)<<16)
-		+ (switch_read(119)<<8)
-		+ switch_read(120));
+	//switch_write(110, 0x1c);
+	//switch_write(111, 0x3 + 0x20*port_index);
+	//rx_err = (((switch_read(117) & 0x1f)<<24)
+		//+ (switch_read(118)<<16)
+		//+ (switch_read(119)<<8)
+		//+ switch_read(120));
+	//fx_port_counts[port_index].rx_over_err += rx_err;
+	//rx_err_sum += rx_err;
+	encode_spi_reg01(false, 110, txreg);
+	txreg[2] = 0x1c;
+	txreg[3] = 0x3 + 0x20*port_index;
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	encode_spi_reg01(true, 117, txreg);
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 2);
+	usart_spi_read_packet(USART_SPI, rxreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	rx_err = ntohl(*(uint32_t*)(uintptr_t)rxreg) & 0x1fffffff;
 	fx_port_counts[port_index].rx_over_err += rx_err;
 	rx_err_sum += rx_err;
 	
-	switch_write(110, 0x1c);
-	switch_write(111, 0x6 + 0x20*port_index);
-	rx_err = (((switch_read(117) & 0x1f)<<24)
-		+ (switch_read(118)<<16)
-		+ (switch_read(119)<<8)
-		+ switch_read(120));
+	//switch_write(110, 0x1c);
+	//switch_write(111, 0x6 + 0x20*port_index);
+	//rx_err = (((switch_read(117) & 0x1f)<<24)
+		//+ (switch_read(118)<<16)
+		//+ (switch_read(119)<<8)
+		//+ switch_read(120));
+	//fx_port_counts[port_index].rx_crc_err += rx_err;
+	//rx_err_sum += rx_err;
+	encode_spi_reg01(false, 110, txreg);
+	txreg[2] = 0x1c;
+	txreg[3] = 0x6 + 0x20*port_index;
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	encode_spi_reg01(true, 117, txreg);
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 2);
+	usart_spi_read_packet(USART_SPI, rxreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	rx_err = ntohl(*(uint32_t*)(uintptr_t)rxreg) & 0x1fffffff;
 	fx_port_counts[port_index].rx_crc_err += rx_err;
 	rx_err_sum += rx_err;
 	
 	fx_port_counts[port_index].rx_errors += rx_err_sum;
 	
-	switch_write(110, 0x1c);
-	switch_write(111, 0x1c + 0x20*port_index);
-		rx_err = (((switch_read(117) & 0x1f)<<24)
-		+ (switch_read(118)<<16)
-		+ (switch_read(119)<<8)
-		+ switch_read(120));
-	fx_port_counts[port_index].collisions += rx_err;
+	//switch_write(110, 0x1c);
+	//switch_write(111, 0x1c + 0x20*port_index);
+		//rx_err = (((switch_read(117) & 0x1f)<<24)
+		//+ (switch_read(118)<<16)
+		//+ (switch_read(119)<<8)
+		//+ switch_read(120));
+	//fx_port_counts[port_index].collisions += rx_err;
+	encode_spi_reg01(false, 110, txreg);
+	txreg[2] = 0x1c;
+	txreg[3] = 0x1c + 0x20*port_index;
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	encode_spi_reg01(true, 117, txreg);
+	usart_spi_select_device(USART_SPI, &USART_SPI_DEVICE);
+	usart_spi_write_packet(USART_SPI, txreg, 2);
+	usart_spi_read_packet(USART_SPI, rxreg, 4);
+	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
+	fx_port_counts[port_index].collisions += ntohl(*(uint32_t*)(uintptr_t)rxreg) & 0x1fffffff;
 }
 
 void switch_init(){
