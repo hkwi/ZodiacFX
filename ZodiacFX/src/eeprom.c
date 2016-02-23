@@ -70,42 +70,20 @@ void eeprom_init(void)
 */
 int eeprom_write(void)
 {
-	twi_packet_t packet_tx;
-	uint16_t pMemAddress;
-	uint8_t *pZodiac_Config;
-	int pagecount = 0;
-	int configsize = sizeof(Zodiac_Config);
+	twi_packet_t packet_tx = {
+		.addr = {0, 0, 0},
+		.addr_length = EEPROM_MEM_ADDR_LENGTH,
+		.buffer = &Zodiac_Config,
+		.length = sizeof(Zodiac_Config),
+		.chip = AT24C_ADDRESS,
+	};
+
+	printf("Writing Configuration to EEPROM (%d bytes)\r\n", packet_tx.length);
 	
-	/* Configure the data packet to be transmitted */
-	packet_tx.chip        = AT24C_ADDRESS;
-	packet_tx.addr_length = EEPROM_MEM_ADDR_LENGTH;
-	
-	printf("Writing Configuration to EEPROM (%d bytes)\r\n",configsize);
-	
-	while (pagecount < configsize)
+	if (twi_master_write(TWI0, &packet_tx) != TWI_SUCCESS)
 	{
-		pZodiac_Config = &Zodiac_Config;
-		pMemAddress = pagecount;
-		pZodiac_Config = pZodiac_Config + pagecount;
-		packet_tx.addr[0]     = pMemAddress;
-		packet_tx.addr[1]     = pMemAddress >> 8;
-		packet_tx.buffer      = pZodiac_Config;
-				
-		if ((configsize - pagecount) >= 16)
-		{
-			packet_tx.length = 16;
-		} else {
-			packet_tx.length = configsize - pagecount;
-		}
-	
-		if (twi_master_write(TWI0, &packet_tx) != TWI_SUCCESS)
-		{
-			printf("-%d-\tTWI master write packet failed.\r\n", pagecount);
-			return -1;
-		}
-		
-		pagecount = pagecount + 16;
-		for(int x = 0;x<1000000;x++);
+		printf("TWI master write packet failed.\r\n");
+		return -1;
 	}
 	
 	printf("Done!\r");
@@ -117,24 +95,18 @@ int eeprom_write(void)
 *	EEROM read function
 *
 */
-int eeprom_read(void)
-{
-	twi_packet_t packet_rx;
-	uint16_t pMemAddress;
-	int configsize = sizeof(Zodiac_Config);
-	
+int eeprom_read(void){
 	/* Configure the data packet to be received */
-	packet_rx.chip        = AT24C_ADDRESS;
-	packet_rx.addr_length = EEPROM_MEM_ADDR_LENGTH;
+	twi_packet_t packet_rx = {
+		.addr = {0, 0, 0},
+		.addr_length = EEPROM_MEM_ADDR_LENGTH,
+		.buffer = &Zodiac_Config,
+		.length = sizeof(Zodiac_Config),
+		.chip = AT24C_ADDRESS,
+	};
 
-	printf("Reading Configuration from EEPROM (%d bytes)\r\n",configsize);
+	printf("Reading Configuration from EEPROM (%d bytes)\r\n", packet_rx.length);
 	
-	pMemAddress = 0;
-	packet_rx.addr[0]     = pMemAddress;
-	packet_rx.addr[1]     = pMemAddress >> 8;
-	packet_rx.buffer      = &Zodiac_Config;
-	packet_rx.length = configsize;
-
 	if (twi_master_read(TWI0, &packet_rx) != TWI_SUCCESS)
 	{
 		printf("-1-\tTWI master read packet failed.\r\n");

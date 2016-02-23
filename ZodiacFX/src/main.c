@@ -45,7 +45,7 @@
 
 // Global variables
 struct netif gs_net_if;
-struct zodiac_config Zodiac_Config;
+volatile struct zodiac_config Zodiac_Config;
 int portmap[4];
 int32_t ul_temp;
 bool masterselect;
@@ -146,7 +146,7 @@ int main (void)
 	spi_init();
 	eeprom_init();
 	temp_init();
-		
+	
 	loadConfig(); // Load Config
 	
 	IP4_ADDR(&x_ip_addr, Zodiac_Config.IP_address[0], Zodiac_Config.IP_address[1],Zodiac_Config.IP_address[2], Zodiac_Config.IP_address[3]);
@@ -165,7 +165,7 @@ int main (void)
 	netif_set_default(&gs_net_if);
 
 	netif_set_up(&gs_net_if);
-	
+		
 	/* Initialize timer. */
 	sys_init_timing();
 	

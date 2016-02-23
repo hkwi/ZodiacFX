@@ -50,7 +50,7 @@ int OF_Version = 0x00;
 // prototype
 static bool switch_negotiated(void);
 
-bool disable_ofp_pipeline = false;
+volatile bool disable_ofp_pipeline = false;
 
 struct fx_switch_config fx_switch = {
 	.flags = OFPC13_FRAG_NORMAL,
@@ -616,12 +616,13 @@ static uint8_t update_port_counts_next_no = 0;
 static void update_fx_ports(void){
 	// Recommendation was read every 30 sec; counters are designed as "read clear".
 	if(update_port_counts_next_ms - sys_get_ms() > 0x80000000u){
+		update_port_counts_next_ms = sys_get_ms() + PORT_COUNTS_UPDATE_INTERVAL;
 		sync_switch_port_counts(update_port_counts_next_no);
 		update_port_counts_next_no++;
 		update_port_counts_next_no %= 4;
-		update_port_counts_next_ms = sys_get_ms() + PORT_COUNTS_UPDATE_INTERVAL;
 	}
 	if(update_port_status_next_ms - sys_get_ms() > 0x80000000u){
+		update_port_status_next_ms = sys_get_ms() + PORT_STATUS_UPDATE_INTERVAL;
 		for(int i=0; i<4; i++){
 			if(Zodiac_Config.of_port[i] == 1){
 				uint8_t state = get_switch_status(i);
@@ -715,6 +716,16 @@ void openflow_pipeline(struct pbuf *frame, uint32_t in_port){
 	};
 	struct fx_packet_oob oob;
 	create_oob(frame, &oob);
+	
+	// trim ethernet padding - may make this configurable
+	if(frame->tot_len == 60){
+		if(oob.eth_type == htons(0x0800)){
+			struct ip_hdr *iphdr = (void*)((uintptr_t)frame->payload + oob.eth_offset);
+			uint16_t trim = oob.eth_offset + ntohs(IPH_LEN(iphdr));
+			pbuf_realloc(frame, trim);
+		}
+	}
+	
 	int flow = lookup_fx_table(&packet, &oob, 0);
 	fx_table_counts[0].lookup++;
 	if(flow < 0){
@@ -723,7 +734,11 @@ void openflow_pipeline(struct pbuf *frame, uint32_t in_port){
 		}
 		return;
 	}
-	fx_table_counts[0].matched++;
+	if(OF_Version == 4 && fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
+		// table-miss flow entry
+	} else {
+		fx_table_counts[0].matched++;
+	}
 	fx_flow_counts[flow].packet_count++;
 	fx_flow_counts[flow].byte_count+=frame->tot_len;
 	fx_flow_timeouts[flow].update = sys_get_ms();

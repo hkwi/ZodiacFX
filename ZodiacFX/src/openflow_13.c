@@ -1141,6 +1141,43 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 					}
 				}
 				break;
+				
+				// SCTP_SRC
+				// SCTP_DST
+				
+				case OFPXMT13_OFB_ICMPV4_TYPE:
+				{
+					if(oob->eth_type != htons(0x0800)){
+						return -1;
+					}
+					struct ip_hdr *iphdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
+					if(IPH_PROTO(iphdr)!=1){
+						return -1;
+					}
+					uint8_t *hdr = (void*)((uintptr_t)packet->data->payload
+						+ oob->eth_offset + IPH_HL(iphdr) * 4);
+					if(hdr[0] != pos[4]){
+						return -1;
+					}
+				}
+				break;
+				
+				case OFPXMT13_OFB_ICMPV4_CODE:
+				{
+					if(oob->eth_type != htons(0x0800)){
+						return -1;
+					}
+					struct ip_hdr *iphdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
+					if(IPH_PROTO(iphdr)!=1){
+						return -1;
+					}
+					uint8_t *hdr = (void*)((uintptr_t)packet->data->payload
+						+ oob->eth_offset + IPH_HL(iphdr) * 4);
+					if(hdr[1] != pos[4]){
+						return -1;
+					}
+				}
+				break;
 			}
 		}
 	}
@@ -1154,7 +1191,7 @@ static void send_ofp13_packet_in(struct fx_packet *packet, struct ofp13_packet_i
 	
 	base.header.type = OFPT13_PACKET_IN;
 	base.header.version = 4;
-	base.total_len = packet->data->tot_len;
+	base.total_len = htons(packet->data->tot_len);
 	
 	char oxm[32];
 	uint16_t oxm_length = 0;
@@ -1452,6 +1489,14 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 			}
 		} // TODO: IPv6, MPLS
 		break;
+		
+		case OFPAT13_SET_FIELD:
+		{
+			struct ofp13_action_set_field *as = action;
+			set_field(packet, oob, as->field);
+		}
+		break;
+		
 	}
 }
 
@@ -1538,7 +1583,11 @@ void execute_ofp13_flow(struct fx_packet *packet, struct fx_packet_oob *oob, int
 			if(flow < 0){
 				return;
 			}
-			fx_table_counts[table].matched++;
+			if(fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
+				// table-miss
+			}else{
+				fx_table_counts[table].matched++;
+			}
 			fx_flow_counts[flow].packet_count++;
 			fx_flow_counts[flow].byte_count+=packet->data->tot_len;
 			fx_flow_timeouts[flow].update = sys_get_ms();

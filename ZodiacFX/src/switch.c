@@ -38,17 +38,13 @@
 #include "ksz8795clx/ethernet_phy.h"
 #include "netif/etharp.h"
 
-/** The GMAC driver instance */
-gmac_device_t gs_gmac_dev;
-extern struct tcp_conn tcp_conn;
 extern struct zodiac_config Zodiac_Config;
 extern int OF_Version;
-uint8_t gmacbuffer[1536];
-struct ofp10_port_stats phys10_port_stats[4];
-struct ofp13_port_stats phys13_port_stats[4];
-uint8_t port_status[4];
-/** Buffer for ethernet packets */
-static volatile uint8_t gs_uc_eth_buffer[GMAC_FRAME_LENTGH_MAX];
+
+/** The GMAC driver instance */
+gmac_device_t gs_gmac_dev = {
+	.p_hw = GMAC,
+};
 
 /* SPI clock setting (Hz). */
 static uint32_t gs_ul_spi_clock = 500000;
@@ -74,12 +70,6 @@ static uint32_t gs_ul_spi_clock = 500000;
 
 uint8_t stats_rr = 0;
 
-// Internal functions
-int readtxbytes(int port);
-int readrxbytes(int port);
-int readtxdrop(int port);
-int readrxdrop(int port);
-int readrxcrcerr(int port);
 void spi_master_initialize(void);
 void spi_slave_initialize(void);
 
@@ -302,136 +292,6 @@ void enableOF(void)
 }
 
 /*
-*	Update the port stats counters
-*
-*	Getting the port stats can has a significant impact on performance.
-*	It can take over 100ms to get a response so we only query one port per call
-*
-* Recommendation was read every 30 sec; counters are designed as "read clear".
-*/
-void update_port_stats(void)
-{	
-	if (OF_Version == 1)
-	{
-		phys10_port_stats[stats_rr].tx_bytes += readtxbytes(stats_rr+1);
-		phys10_port_stats[stats_rr].rx_bytes += readrxbytes(stats_rr+1);
-		phys10_port_stats[stats_rr].tx_dropped += readtxdrop(stats_rr+1);
-		phys10_port_stats[stats_rr].rx_dropped += readrxdrop(stats_rr+1);
-		phys10_port_stats[stats_rr].rx_crc_err += readrxdrop(stats_rr+1);
-	}
-		
-	if (OF_Version == 4)
-	{
-		phys13_port_stats[stats_rr].tx_bytes += readtxbytes(stats_rr+1);
-		phys13_port_stats[stats_rr].rx_bytes += readrxbytes(stats_rr+1);
-		phys13_port_stats[stats_rr].tx_dropped += readtxdrop(stats_rr+1);
-		phys13_port_stats[stats_rr].rx_dropped += readrxdrop(stats_rr+1);
-		phys13_port_stats[stats_rr].rx_crc_err += readrxdrop(stats_rr+1);
-	}
-	stats_rr++;
-	if (stats_rr == 4) stats_rr = 0;
-}
-
-/*
-*	Read the number of CRC errors from the switch
-*
-*	@param port - the number of the port to get the stats for.
-*
-*/
-int readrxcrcerr(int port)
-{
-	int total = 0;
-	uint8_t reg = (6 + (32*(port-1)));
-	switch_write(110,28);
-	switch_write(111, reg);
-	total += (switch_read(119) * 256);
-	total += switch_read(120);
-	return total;
-}
-
-/*
-*	Read the number of received bytes from the switch
-*
-*	@param port - the number of the port to get the stats for.
-*
-*/
-int readtxbytes(int port)
-{
-	int total = 0;
-	uint8_t reg = (1 + (4*(port-1)));
-	switch_write(110,29);
-	switch_write(111, reg);
-	total += (switch_read(119) * 256);
-	total += switch_read(120);
-	return total;
-}
-
-/*
-*	Read the number of transmitted bytes from the switch
-*
-*	@param port - the number of the port to get the stats for.
-*
-*/
-int readrxbytes(int port)
-{
-	int total = 0;
-	uint8_t reg = (4*(port-1));
-	switch_write(110,29);
-	switch_write(111, reg);
-	total += (switch_read(119) * 256);
-	total += switch_read(120);
-	return total;
-}
-
-/*
-*	Read the number of dropped RX packets from the switch
-*
-*	@param port - the number of the port to get the stats for.
-*
-*/
-int readrxdrop(int port)
-{
-	int total = 0;
-	uint8_t reg = (2 + (4*(port-1)));
-	switch_write(110,29);
-	switch_write(111, reg);
-	total += (switch_read(119) * 256);
-	total += switch_read(120);
-	return total;
-}
-
-/*
-*	Read the number of dropped TX packets from the switch
-*
-*	@param port - the number of the port to get the stats for.
-*
-*/
-int readtxdrop(int port)
-{
-	int total = 0;
-	uint8_t reg = (3 + (4*(port-1)));
-	switch_write(110,29);
-	switch_write(111, reg);
-	total += (switch_read(119) * 256);
-	total += switch_read(120);
-	return total;
-}
-
-
-/*
-*	Updates the port status
-*
-*/
-void update_port_status(void)
-{
-	port_status[0] = (switch_read(30) & 32) >> 5;
-	port_status[1] = (switch_read(46) & 32) >> 5;
-	port_status[2] = (switch_read(62) & 32) >> 5;
-	port_status[3] = (switch_read(78) & 32) >> 5;
-	return;
-}
-
-/*
 *	GMAC write function
 *	
 *	@param *p_buffer - pointer to the buffer containing the data to send.
@@ -440,20 +300,28 @@ void update_port_status(void)
 *
 */
 void gmac_write(const void *buffer, uint16_t ul_size, uint8_t port){
-	// Add padding
-	// switch discards frames less than 64 bytes
-	if (ul_size < 60){
-		memset(gmacbuffer, 0, 61);
-		memcpy(gmacbuffer, buffer, ul_size);
-		uint8_t *last_byte = (void*)((uintptr_t)gmacbuffer + 60);
-		*last_byte = port;
-		gmac_dev_write(&gs_gmac_dev, gmacbuffer, 61, NULL);
-	} else {
-		memcpy(gmacbuffer, buffer, ul_size);
-		uint8_t *last_byte = (void*)((uintptr_t)gmacbuffer + ul_size);
-		*last_byte = port;
-		gmac_dev_write(&gs_gmac_dev, gmacbuffer, (ul_size + 1), NULL);
+	if(port==0x80){ // special rule here. don't send to openflow port
+		uint8_t n = 0;
+		for(int i=0; i<MAX_PORTS; i++){
+			if(Zodiac_Config.of_port[i] != 1){
+				n |= 1<<i;
+			}
+		}
+		port = n;
 	}
+	// switch discards frames less than 64 bytes (ethernet minimum size)
+	uint8_t tx_buffer[1536];
+	uint32_t tx_buffer_length;
+	if (ul_size < 60){ // Add padding to 60 bytes (60 + 4(FCS)==64)
+		tx_buffer_length = 60;
+		memset(tx_buffer, 0, 61);
+	} else {
+		tx_buffer_length = ul_size;
+	}
+	memcpy(tx_buffer, buffer, ul_size);
+	uint8_t *last_byte = (void*)((uintptr_t)tx_buffer + tx_buffer_length);
+	*last_byte = port;
+	gmac_dev_write(&gs_gmac_dev, tx_buffer, tx_buffer_length+1, NULL);
 	return;
 }
 
@@ -609,12 +477,8 @@ void sync_switch_port_counts(uint8_t port_index){
 	usart_spi_write_packet(USART_SPI, txreg, 2);
 	usart_spi_read_packet(USART_SPI, rxreg, 5);
 	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
-	fx_port_counts[port_index].rx_bytes += (
-		(((uint64_t)rxreg[0] & 0x0f)<<32)
-		+ ((uint64_t)rxreg[1]<<24)
-		+ ((uint64_t)rxreg[2]<<16)
-		+ ((uint64_t)rxreg[3]<<8)
-		+ (uint64_t)rxreg[4]);
+	fx_port_counts[port_index].rx_bytes += (((uint64_t)rxreg[0] & 0x0f)<<32);
+	fx_port_counts[port_index].rx_bytes += htonl(*(uint32_t*)((uintptr_t)rxreg+1));
 	
 	//switch_write(110, 0x1d);
 	//switch_write(111, 4*port_index + 1);
@@ -635,7 +499,8 @@ void sync_switch_port_counts(uint8_t port_index){
 	usart_spi_write_packet(USART_SPI, txreg, 2);
 	usart_spi_read_packet(USART_SPI, rxreg, 5);
 	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
-	fx_port_counts[port_index].tx_bytes += (((uint64_t)rxreg[0] & 0x0f)<<32) + htonl(*(uint32_t*)((uintptr_t)rxreg+1));
+	fx_port_counts[port_index].tx_bytes += (((uint64_t)rxreg[0] & 0x0f)<<32);
+	fx_port_counts[port_index].tx_bytes += htonl(*(uint32_t*)((uintptr_t)rxreg+1));
 
 	//switch_write(110, 0x1d);
 	//switch_write(111, 4*port_index + 2);
@@ -772,26 +637,47 @@ void switch_init(){
 	/* Wait for PHY to be ready (CAT811: Max400ms) */
 	volatile uint32_t ul_delay = sysclk_get_cpu_hz() / 1000 / 3 * 400;
 	while (ul_delay--);
-		
+	
 	/* Enable GMAC clock */
 	pmc_enable_periph_clk(ID_GMAC);
-	
+
 	/* Fill in GMAC options */
-	gmac_options_t gmac_option;
-	gmac_option.uc_copy_all_frame = 1;
-	gmac_option.uc_no_boardcast = 0;
-	memcpy(gmac_option.uc_mac_addr, Zodiac_Config.MAC_address, 6);
-	gs_gmac_dev.p_hw = GMAC;
+	NVIC_DisableIRQ(GMAC_IRQn); // we'll setup gmac handler object
+	gmac_options_t gmac_option = {
+		.uc_copy_all_frame = 1,
+		.uc_no_boardcast = 0,
+		.uc_mac_addr = {
+			Zodiac_Config.MAC_address[0],
+			Zodiac_Config.MAC_address[1],
+			Zodiac_Config.MAC_address[2],
+			Zodiac_Config.MAC_address[3],
+			Zodiac_Config.MAC_address[4],
+			Zodiac_Config.MAC_address[5],
+		},
+	};
 	/* Init GMAC driver structure */
 	gmac_dev_init(GMAC, &gs_gmac_dev, &gmac_option);
 	/* Init KSZ8795 registers */
 	switch_write(86,232);	// Set CPU interface to MII
 	switch_write(12, 0x46);	// Turn on tail tag mode
+	// soft reset
+	switch_write(2, 0x46);
+	switch_write(31, 0x11);
+	switch_write(47, 0x11);
+	switch_write(63, 0x11);
+	switch_write(79, 0x11);
 	// CPU(port5) controls the traffic
 	switch_write(21, 0x03);
 	switch_write(37, 0x03);
 	switch_write(53, 0x03);
 	switch_write(69, 0x03);
+	// disable learning
+	switch_write(18, 0x07);
+	switch_write(34, 0x07);
+	switch_write(50, 0x07);
+	switch_write(66, 0x07);
+	switch_write(82, 0x07);
+	
 	/* Enable Interrupt */
 	NVIC_EnableIRQ(GMAC_IRQn);
 	
@@ -807,23 +693,21 @@ void switch_init(){
 }
 
 void switch_task(struct netif *netif){
-	uint8_t frame_buffer[GMAC_FRAME_LENTGH_MAX];
-	// PBUF_ROM or PBUF_REF fails with ICMP handling: not yet implemented in LWIP.
-	uint32_t frame_length;
-
+	uint8_t rx_buffer[GMAC_FRAME_LENTGH_MAX];
+	uint32_t rx_buffer_length = GMAC_FRAME_LENTGH_MAX;
 	// XXX: gmac_dev_read as gmac_low_level_input, may return pbuf chain directly here.
 	// XXX: lwip expects frame header structures are all placed in the pbuf first chunk.
 	// XXX: and openflow pipeline will expect this as well.
-	if (GMAC_OK == gmac_dev_read(&gs_gmac_dev, frame_buffer, GMAC_FRAME_LENTGH_MAX, &frame_length)){
+	if (GMAC_OK == gmac_dev_read(&gs_gmac_dev, rx_buffer, GMAC_FRAME_LENTGH_MAX, &rx_buffer_length)){
 		// switch is configured to work in tail tag mode
-		frame_length--;
-		uint8_t tag = frame_buffer[frame_length];
-		struct pbuf *frame = pbuf_alloc(PBUF_RAW, frame_length, PBUF_POOL);
-		// only PBUF_POOL or RAM supported. PBUF_REF does not work for ping for example.
+		rx_buffer_length--;
+		uint8_t tag = rx_buffer[rx_buffer_length];
+		// PBUF_ROM or PBUF_REF fails with ICMP handling: not yet implemented in LWIP.
+		struct pbuf *frame = pbuf_alloc(PBUF_RAW, rx_buffer_length, PBUF_POOL);
 		if(frame==NULL){
 			switch_unreach();
 		}
-		memcpy(frame->payload, frame_buffer, frame_length);
+		memcpy(frame->payload, rx_buffer, rx_buffer_length);
 		if(tag<4 && Zodiac_Config.of_port[tag]==1){ // XXX: port number hardcoded here
 			if(disable_ofp_pipeline == false){
 				fx_port_counts[tag].rx_packets++;
