@@ -45,7 +45,7 @@
 
 // Global variables
 struct netif gs_net_if;
-volatile struct zodiac_config Zodiac_Config;
+struct zodiac_config Zodiac_Config;
 int portmap[4];
 int32_t ul_temp;
 bool masterselect;
@@ -114,11 +114,6 @@ void HardFault_Handler(void)
 */
 int main (void)
 {
-	char cCommand[64];
-	char cCommand_last[64];
-	memset(&cCommand, 0, sizeof(cCommand));
-	memset(&cCommand_last, 0, sizeof(cCommand_last));
-	cCommand[0] = '\0';
 	struct ip_addr x_ip_addr, x_net_mask, x_gateway;
 	
 	sysclk_init();
@@ -195,7 +190,7 @@ int main (void)
 	while(1)
 	{
 		switch_task(&gs_net_if);
-		task_command(cCommand, cCommand_last);	
+		task_command();
 		sys_check_timeouts();
 		openflow_task();
 	}

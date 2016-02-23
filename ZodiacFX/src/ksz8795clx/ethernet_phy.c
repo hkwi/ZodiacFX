@@ -202,6 +202,7 @@ uint8_t ethernet_phy_set_link(Gmac *p_gmac, uint8_t uc_phy_addr,
 uint8_t ethernet_phy_auto_negotiate(Gmac *p_gmac, uint8_t uc_phy_addr)
 {
 	/* Function not required*/
+	return GMAC_OK;
 }
 
 /**

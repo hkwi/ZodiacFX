@@ -47,12 +47,12 @@ enum cli_context{
 
 PACK_STRUCT_BEGIN
 struct virtlan {
-	int uVlanID;
+	int32_t uVlanID;
 	char cVlanName[16];
-	int uVlanType;
-	int uTagged;
+	int32_t uVlanType;
+	int32_t uTagged;
 	uint8_t portmap[4];		// If the port is assigned to this VLAN
-	int uActive;
+	int32_t uActive;
 } PACK_STRUCT_STRUCT;
 PACK_STRUCT_END
 
@@ -64,8 +64,8 @@ struct zodiac_config {
 	uint8_t netmask[4];
 	uint8_t gateway_address[4];
 	uint8_t OFIP_address[4];
-	int OFPort;
-	int OFEnabled;
+	int32_t OFPort;
+	int32_t OFEnabled;
 	struct virtlan vlan_list[MAX_VLANS];
 	uint8_t of_port[4];		// If the port is assigned to a VLAN
 	uint8_t failstate;
@@ -89,7 +89,7 @@ typedef struct arp_header {
 } arp_header_t, *p_arp_header_t;
 
 
-void task_command(char *str, char * str_last);
+void task_command(void);
 void loadConfig(void);
 
 #endif /* COMMANDS_H_ */

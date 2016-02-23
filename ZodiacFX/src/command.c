@@ -49,6 +49,7 @@
 extern struct zodiac_config Zodiac_Config;
 extern struct ofp_flow_mod flow_match[MAX_FLOWS];
 extern struct ofp13_flow_mod flow_match13[MAX_FLOWS];
+extern int32_t ul_temp;
 extern int iLastFlow;
 extern int OF_Version;
 extern bool masterselect;
@@ -101,14 +102,20 @@ void saveConfig(void)
 	return;
 }
 
+#define CMD_BUFLEN 64
+static char cCommand[64] = {0};
+static char cCommand_last[64] = {0};
+
 /*
 *	Main command line loop
 *
 *	@param str - pointer to the current command string
 *	@param str_last - pointer to the last command string
 */
-void task_command(char *str, char *str_last)
-{
+void task_command(void){
+	char *str = cCommand;
+	char *str_last = cCommand_last;
+
 	char ch;
 	char *command;
 	char *param1;
@@ -217,7 +224,9 @@ void task_command(char *str, char *str_last)
 			
 		} else if (charcount < 63 && ch > 31 && ch < 127 && esc_char == 0)	// Alphanumeric key
 		{
-			strncat(str,&ch,1);
+			if(charcount < CMD_BUFLEN){ // xxx
+				strncat(str,&ch,1);
+			}
 			charcount++;
 			printf("%c",ch); // echo to output
 			esc_char = 0;
@@ -498,9 +507,10 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 	// Set Device Name
 	if (strcmp(command, "set")==0 && strcmp(param1, "name")==0)
 	{
+		memset(Zodiac_Config.device_name, 0, 16);
 		uint8_t namelen = strlen(param2);
 		if (namelen > 15 ) namelen = 15; // Make sure name is less then 16 characters
-		sprintf(Zodiac_Config.device_name, param2, namelen);
+		memcpy(Zodiac_Config.device_name, param2, namelen);
 		printf("Device name set to '%s'\r\n",Zodiac_Config.device_name);
 		return;
 	}
@@ -508,7 +518,7 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 	// Set MAC Address
 	if (strcmp(command, "set")==0 && strcmp(param1, "mac-address")==0)
 	{
-		uint8_t mac1,mac2,mac3,mac4,mac5,mac6;
+		unsigned int mac1,mac2,mac3,mac4,mac5,mac6;
 		if (strlen(param2) != 17 )
 		{
 			printf("incorrect format\r\n");
@@ -607,7 +617,7 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 	
 	// Reset the device to a basic configuration
 	if (strcmp(command, "factory")==0 && strcmp(param1, "reset")==0)
-	{	
+	{
 		struct zodiac_config reset_config = 
 		{
 			"Zodiac_FX",		// Name
@@ -622,7 +632,7 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 		memset(&reset_config.vlan_list, 0, sizeof(struct virtlan)* MAX_VLANS); // Clear vlan array
 		
 		// Config VLAN 100
-		sprintf(&reset_config.vlan_list[0].cVlanName, "Openflow");	// Vlan name
+		sprintf(reset_config.vlan_list[0].cVlanName, "Openflow");	// Vlan name
 		reset_config.vlan_list[0].portmap[0] = 1;		// Assign port 1 to this vlan
 		reset_config.vlan_list[0].portmap[1] = 1;		// Assign port 2 to this vlan		
 		reset_config.vlan_list[0].portmap[2] = 1;		// Assign port 3 to this vlan
@@ -632,7 +642,7 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 		reset_config.vlan_list[0].uTagged = 0;		// Set as untagged	
 		
 		// Config VLAN 200
-		sprintf(&reset_config.vlan_list[1].cVlanName, "Controller");
+		sprintf(reset_config.vlan_list[1].cVlanName, "Controller");
 		reset_config.vlan_list[1].portmap[3] = 1;		// Assign port 4 to this vlan
 		reset_config.vlan_list[1].uActive = 1;		// Vlan is active
 		reset_config.vlan_list[1].uVlanID = 200;	// Vlan ID is 200
@@ -651,7 +661,7 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 		// Force OpenFlow version
 		reset_config.of_version = 0;			// Force version disabled
 								
-		memcpy(&reset_config.MAC_address, &Zodiac_Config.MAC_address, 6);		// Copy over existng MAC address so it is not reset
+		memcpy(reset_config.MAC_address, Zodiac_Config.MAC_address, 6);		// Copy over existng MAC address so it is not reset
 		memcpy(&Zodiac_Config, &reset_config, sizeof(struct zodiac_config));
 		saveConfig();
 		return;
@@ -777,6 +787,12 @@ void command_debug(char *command, char *param1, char *param2, char *param3)
 	{
 		rstc_start_software_reset(RSTC);	// Need to fix this, board resets but can't connect to CLI again
 		while (1);
+	}
+	
+	if(strcmp(command, "temp")==0)
+	{
+		printf("Temp %"PRIi32"\r\n", ul_temp);
+		return;
 	}
 	
 	// Unknown Command response
