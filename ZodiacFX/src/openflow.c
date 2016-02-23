@@ -477,6 +477,9 @@ static err_t ofp_poll_cb(void *arg, struct tcp_pcb *pcb){
 			return tcp_output(ofp->tcp);
 		}
 	}
+	if(ofp->negotiated){
+		ofp_async();
+	}
 	return ERR_OK;
 }
 

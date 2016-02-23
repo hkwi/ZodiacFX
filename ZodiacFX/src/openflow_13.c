@@ -1375,19 +1375,21 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 					for(int i=0; i<MAX_BUFFERS; i++){
 						struct fx_packet_in *pin = fx_packet_ins+i;
 						if(pin->send_bits == 0){
-							pin->send_bits = send_bits;
-							pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
-							
-							pin->buffer_id = msg.buffer_id;
-							pin->reason = msg.reason;
-							pin->table_id = msg.table_id;
-							pin->cookie = msg.cookie;
-							
 							struct pbuf *data = pbuf_alloc(PBUF_RAW, packet->data->tot_len, PBUF_RAM);
-							pbuf_copy(data, packet->data);
-							pin->packet = *packet;
-							pin->packet.data = data;
-							pin->max_len = out->max_len;
+							if(data != NULL){
+								pin->send_bits = send_bits;
+								pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
+								
+								pin->buffer_id = msg.buffer_id;
+								pin->reason = msg.reason;
+								pin->table_id = msg.table_id;
+								pin->cookie = msg.cookie;
+								
+								pbuf_copy(data, packet->data);
+								pin->packet = *packet;
+								pin->packet.data = data;
+								pin->max_len = out->max_len;
+							}
 							break;
 						}
 					}
@@ -1408,14 +1410,23 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 			struct ofp13_action_push *ap = action;
 			uint16_t vlan = oob->vlan & htons(0xEFFF); // clear CFI
 			// pbuf can't grow as of lwip 1.4
-			struct pbuf *grow = pbuf_alloc(PBUF_RAW, packet->data->tot_len + 4, PBUF_POOL);
-			pbuf_copy_partial(packet->data, grow->payload, 12, 0);
-			*(uint16_t*)((uintptr_t)grow->payload + 12) = ap->ethertype;
-			*(uint16_t*)((uintptr_t)grow->payload + 14) = vlan;
-			pbuf_copy_partial(packet->data, (void*)((uintptr_t)grow->payload + 16), packet->data->tot_len - 12, 12);
+			uint8_t tmp[GMAC_FRAME_LENTGH_MAX];
+			uint16_t tmplen = packet->data->tot_len + 4;
+			pbuf_copy_partial(packet->data, tmp, 12, 0);
+			*(uint16_t*)((uintptr_t)tmp + 12) = ap->ethertype;
+			*(uint16_t*)((uintptr_t)tmp + 14) = vlan;
+			pbuf_copy_partial(packet->data, (void*)((uintptr_t)tmp + 16), packet->data->tot_len - 12, 12);
+			pbuf_type t = packet->data->type;
 			pbuf_free(packet->data);
-			packet->data = grow;
-			create_oob(packet->data, oob);
+			
+			struct pbuf *data = pbuf_alloc(PBUF_RAW, tmplen, t);
+			if(data != NULL){
+				memcpy(data->payload, tmp, tmplen);
+				packet->data = data;
+				create_oob(packet->data, oob);
+			}else{
+				// should not happen. because same type one pbuf was already freed
+			}
 		}
 		break;
 		
@@ -1467,19 +1478,23 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 					for(int i=0; i<MAX_BUFFERS; i++){
 						struct fx_packet_in *pin = fx_packet_ins+i;
 						if(pin->send_bits == 0){
-							pin->send_bits = send_bits;
-							pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
-							
-							pin->buffer_id = msg.buffer_id;
-							pin->reason = msg.reason;
-							pin->table_id = msg.table_id;
-							pin->cookie = msg.cookie;
-							
 							struct pbuf *data = pbuf_alloc(PBUF_RAW, packet->data->tot_len, PBUF_RAM);
-							pbuf_copy(data, packet->data);
-							pin->packet = *packet;
-							pin->packet.data = data;
-							pin->max_len = fx_switch.miss_send_len;
+							if(data != NULL){
+								pin->send_bits = send_bits;
+								pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
+							
+								pin->buffer_id = msg.buffer_id;
+								pin->reason = msg.reason;
+								pin->table_id = msg.table_id;
+								pin->cookie = msg.cookie;
+							
+								pbuf_copy(data, packet->data);
+								pin->packet = *packet;
+								pin->packet.data = data;
+								pin->max_len = fx_switch.miss_send_len;
+							} else {
+								// out of memory. silent drop.
+							}
 							break;
 						}
 					}
@@ -1700,6 +1715,10 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 				uint16_t len = offsetof(struct ofp13_packet_out, actions);
 				len += ntohs(hint->actions_len);
 				struct pbuf *data = pbuf_alloc(PBUF_RAW, length-len, PBUF_POOL);
+				if(data == NULL){ // out-of memory
+					uint16_t elen = ofp_set_error(ofp_buffer, OFPET13_BAD_REQUEST, OFPBRC13_EPERM);
+					return ofp_tx_write(self, ofp_buffer, elen);
+				}
 				memcpy(data->payload, hint+length-len, length-len);
 				packet.data = data;
 			}
