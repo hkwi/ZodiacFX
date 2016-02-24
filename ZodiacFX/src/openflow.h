@@ -213,6 +213,7 @@ struct fx_group_bucket {
 #define MAX_GROUP_BUCKETS 0
 
 // openflow message handling
+enum ofp_pcb_status ofp_write_error(struct ofp_pcb*, uint16_t, uint16_t);
 enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb*);
 enum ofp_pcb_status ofp13_handle(struct ofp_pcb*);
 

@@ -210,38 +210,47 @@ static err_t ofp_close(struct ofp_pcb *self, uint32_t sleep){
 }
 
 /*
- * prepares ofp_error_msg in ofp_buffer
+ * `ofp_write_error` consumes entire request message from ofp_pcb rx buffer.
+ * so don't read from ofp_pcb when use call this.
  */
-uint16_t ofp_set_error(const void *req, uint16_t ofpet, uint16_t ofpec){
-	struct ofp_header hdr;
-	memcpy(&hdr, req, 8);
-	uint16_t length = ntohs(hdr.length);
-	if(length > 64){
-		length = 64;
-	}
-	struct ofp_error_msg err;
-	err.header = hdr;
-	err.header.type = OFPT10_ERROR;
-	err.header.length = htons(12+length);
-	err.type = htons(ofpet);
-	err.code = htons(ofpec);
-	memmove(ofp_buffer+12, req, length);
-	memcpy(ofp_buffer, &err, 12);
-	return 12+length;
-}
-
-/*
- * `ofp_write_error` use look ahead ofp_header, and consumes entire request message from ofp_pcb rx buffer.
- */
-static enum ofp_pcb_status ofp_write_error(struct ofp_pcb *self, struct ofp_header req, uint16_t ofpet, uint16_t ofpec){
+enum ofp_pcb_status ofp_write_error(struct ofp_pcb *self, uint16_t ofpet, uint16_t ofpec){
+	if(ofp_rx_length(self) < 8){
+		return OFP_NOOP;
+	};
+	struct ofp_header req;
+	pbuf_copy_partial(self->rbuf, &req, 8, self->rskip);
+	
 	uint16_t length = ntohs(req.length);
 	if(ofp_rx_length(self) < length || ofp_tx_room(self) < 12+64){
 		return OFP_NOOP;
-	} else {
-		ofp_rx_read(self, ofp_buffer, length);
 	}
-	ofp_set_error(ofp_buffer, ofpet, ofpec);
-	ofp_tx_write(self, ofp_buffer, 12+length);
+
+	uint16_t rlen = 12;
+	struct ofp_error_msg err = {
+		.header = {
+			.version = OF_Version,
+			.type = OFPT10_ERROR,
+			.xid = req.xid,
+		},
+		.type = htons(ofpet),
+		.code = htons(ofpec),
+	};
+	if(length < 8){
+		rlen += 8;
+		ofp_rx_read(self, ofp_buffer+12, 8);
+	} else if(length > 64){
+		rlen += 64;
+		ofp_rx_read(self, ofp_buffer+12, 64);
+		self->rskip += length - 64;
+	} else {
+		rlen += length;
+		ofp_rx_read(self, ofp_buffer+12, length);
+	}
+	err.header.length = htons(rlen);
+	ofp_tx_write(self, ofp_buffer, rlen);
+	if(length < 8){
+		return OFP_CLOSE;
+	}
 	return OFP_OK;
 }
 
@@ -259,27 +268,27 @@ static enum ofp_pcb_status ofp_negotiation(struct ofp_pcb *self){
 		if(length > 64){
 			length = 64; // at least 64 bytes from request by spec.
 		}
-		ofp_write_error(self, req, OFPET10_BAD_REQUEST, OFPBRC10_BAD_VERSION);
+		ofp_write_error(self, OFPET10_BAD_REQUEST, OFPBRC10_BAD_VERSION);
 		return OFP_CLOSE;
 	}
 	// we want to process this at one time
 	uint16_t length = ntohs(req.length);
 	if(ofp_rx_length(self) < length){
 		return OFP_NOOP;
-	} else {
-		length = ofp_rx_read(self, ofp_buffer, length);
 	}
+	
+	
 	bool has_versionbitmap = false;
 	uint32_t versionbitmap = 0;
 	if(length > 8){
 		uint16_t pos = 8;
 		struct ofp13_hello_elem_header element = {0};
 		while(pos < length){
-			memcpy(&element, ofp_buffer+pos, 4);
+			pbuf_copy_partial(self->rbuf, &element, 4, self->rskip+pos);
 			if(ntohs(element.type) == OFPHET13_VERSIONBITMAP){
 				// 1 or 4 is in the first bitmap
 				has_versionbitmap = true;
-				memcpy(&versionbitmap, ofp_buffer+pos+4, 4);
+				pbuf_copy_partial(self->rbuf, &versionbitmap, 4, self->rskip+pos+4);
 				versionbitmap = ntohl(versionbitmap);
 				break;
 			}
@@ -298,19 +307,22 @@ static enum ofp_pcb_status ofp_negotiation(struct ofp_pcb *self){
 		}else if(req.version >= fixed_of_version){
 			self->negotiated = true;
 			OF_Version = fixed_of_version;
+			self->rskip += length;
 			return OFP_OK;
 		}
 	} else if(req.version == 4 || (has_versionbitmap && ((versionbitmap&0x10) != 0))){
 		self->negotiated = true;
 		OF_Version = 4;
+		self->rskip += length;
 		return OFP_OK;
 	} else if(req.version == 1 || (has_versionbitmap && ((versionbitmap&0x02) != 0))){
 		self->negotiated = true;
 		OF_Version = 1;
+		self->rskip += length;
 		return OFP_OK;
 	}
 	// may add reason ASCII string as payload by spec
-	ofp_write_error(self, req, OFPET10_HELLO_FAILED, OFPHFC_INCOMPATIBLE);
+	ofp_write_error(self, OFPET10_HELLO_FAILED, OFPHFC_INCOMPATIBLE);
 	return OFP_CLOSE;
 }
 
@@ -349,19 +361,13 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 		pbuf_copy_partial(self->rbuf, &req, 8, self->rskip);
 		uint16_t length = ntohs(req.length);
 		if(length < 8){
-			ret = ofp_write_error(self, req, OFPET10_BAD_REQUEST, OFPBRC10_BAD_LEN);
-			if(ret == OFP_OK){
-				ofp_rx_read(self, ofp_buffer, length);
-			}
-		} else if(length > OFP_BUFFER_LEN && (req.version != 4 || req.type != OFPT13_MULTIPART_REQUEST)){
-			ofp_write_error(self, req, OFPET10_BAD_REQUEST, OFPBRC10_BAD_LEN);
-			ret = OFP_CLOSE;
+			ret = ofp_write_error(self, OFPET10_BAD_REQUEST, OFPBRC10_BAD_LEN);
 		} else if(req.type == OFPT10_ECHO_REQUEST){
 			// we want to process this at one time
 			if(ofp_rx_length(self) < length || ofp_tx_room(self) < 8){
 				ret = OFP_NOOP;
 			} else {
-				ofp_rx_read(self, ofp_buffer, length);
+				self->rskip += length;
 				struct ofp_header rep = {
 					.version = OF_Version,
 					.type = OFPT10_ECHO_REPLY,
@@ -376,7 +382,7 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 			if(ofp_rx_length(self) < length){
 				ret = OFP_NOOP;
 			} else {
-				ofp_rx_read(self, ofp_buffer, length);
+				self->rskip += length;
 				// TODO: optionally measure the health here
 				ret = OFP_OK;
 			}
@@ -384,18 +390,19 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 			switch(req.type){
 				case OFPT13_BARRIER_REQUEST:
 				if(self->mpreq_on){
-					ret = ofp_write_error(self, req, OFPET13_BAD_REQUEST, OFPBRC13_MULTIPART_BUFFER_OVERFLOW);
+					ret = ofp_write_error(self, OFPET13_BAD_REQUEST, OFPBRC13_MULTIPART_BUFFER_OVERFLOW);
 				} else {
 					if(ofp_rx_length(self) < length || ofp_tx_room(self) < 8){
 						ret = OFP_NOOP;
 					} else {
-						ofp_rx_read(self, ofp_buffer, length);
-						struct ofp_header rep = {0};
-						rep.version = 4;
-						rep.type = OFPT13_BARRIER_REPLY;
-						rep.length = htons(8);
-						rep.xid = req.xid;
-						ofp_tx_write(self, (char*)&rep, 8);
+						self->rskip += length;
+						struct ofp_header rep = {
+							.version = 4,
+							.type = OFPT13_BARRIER_REPLY,
+							.length = htons(8),
+							.xid = req.xid,
+						};
+						ofp_tx_write(self, &rep, 8);
 						ret = OFP_OK;
 					}
 				}
@@ -406,20 +413,18 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 					struct ofp13_multipart_request mpreq;
 					memcpy(&mpreq, self->mpreq_hdr, sizeof(struct ofp13_multipart_request));
 					if(self->mpreq_on && req.xid != mpreq.header.xid){
-						ret = ofp_write_error(self, req, OFPET13_BAD_REQUEST, OFPBRC13_MULTIPART_BUFFER_OVERFLOW);
+						ret = ofp_write_error(self, OFPET13_BAD_REQUEST, OFPBRC13_MULTIPART_BUFFER_OVERFLOW);
+					} else if(length < 16 || length > 16+MP_UNIT_MAXSIZE){
+						ofp_write_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_LEN);
+						ret = OFP_CLOSE;
+					} else if(ofp_tx_room(self) < 16){
+						ret = OFP_NOOP;
 					} else {
-						if(length < 16 || length > 16+MP_UNIT_MAXSIZE){
-							ofp_write_error(self, req, OFPET13_BAD_REQUEST, OFPBRC13_BAD_LEN);
-							ret = OFP_CLOSE;
-						} else if(ofp_rx_length(self) < length || ofp_tx_room(self) < 16){
-							ret = OFP_NOOP;
-						} else {
-							ofp_rx_read(self, self->mpreq_hdr, 16);
-							self->mpreq_on = true;
-							self->mpreq_pos = 16;
-							self->mp_out_index = -1;
-							ret = ofp_multipart_complete(self);
-						}
+						ofp_rx_read(self, self->mpreq_hdr, 16);
+						self->mpreq_on = true;
+						self->mpreq_pos = 16;
+						self->mp_out_index = -1;
+						ret = ofp_multipart_complete(self);
 					}
 				}
 				break;
@@ -429,18 +434,12 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 				break;
 			}
 		} else if(req.version == 1){
-			ret = ofp_write_error(self, req, OFPET10_BAD_REQUEST, OFPBRC10_BAD_TYPE);
-			if(OFP_OK != ret){
-				return ret;
-			}
+			// TODO: implement here
+			ret = ofp_write_error(self, OFPET10_BAD_REQUEST, OFPBRC10_BAD_TYPE);
 		} else {
-			ret = ofp_write_error(self, req, OFPET10_BAD_REQUEST, OFPBRC10_BAD_VERSION);
-			if(OFP_OK != ret){
-				return ret;
-			}
-			return ofp_close(self, CONNECT_RETRY_INTERVAL);
+			ret = ofp_write_error(self, OFPET10_BAD_REQUEST, OFPBRC10_BAD_VERSION);
 		}
-		if(ret == OFP_NOOP){
+		if(ret != OFP_OK){
 			break;
 		}
 	}
@@ -468,11 +467,12 @@ static err_t ofp_poll_cb(void *arg, struct tcp_pcb *pcb){
 	if(ofp->negotiated && ofp->next_ping - sys_get_ms() > 0x80000000U){
 		ofp->next_ping = sys_get_ms() + OFP_PING_INTERVAL;
 		if(ofp_tx_room(ofp) > 8) {
-			struct ofp_header hdr;
-			hdr.version = OF_Version;
-			hdr.type = OFPT10_ECHO_REQUEST;
-			hdr.length = htons(8);
-			hdr.xid = htonl(ofp->xid++);
+			struct ofp_header hdr = {
+				.version = OF_Version,
+				.type = OFPT10_ECHO_REQUEST,
+				.length = htons(8),
+				.xid = htonl(ofp->xid++),
+			};
 			ofp_tx_write(ofp, &hdr, 8);
 			return tcp_output(ofp->tcp);
 		}
@@ -519,11 +519,19 @@ static err_t ofp_recv_cb(void *arg, struct tcp_pcb *tcp, struct pbuf *p, err_t e
 		return ofp_close(ofp, CONNECT_RETRY_INTERVAL);
 	}
 	
-	// TODO: We need some limiter here.
-	tcp_recved(tcp, p->tot_len);
+	uint16_t room = RECV_BUFLEN;
+	if(ofp->rbuf){
+		room -= ofp->rbuf->tot_len;
+	}
+	if(p->tot_len > room){
+		tcp_recved(tcp, room);
+		pbuf_realloc(p, room);
+	} else {
+		tcp_recved(tcp, p->tot_len);
+	}
 	if(ofp->rbuf == NULL){
 		ofp->rbuf = p;
-	} else if(ofp->rbuf->tot_len + p->tot_len > RECV_BUFLEN){
+	} else {
 		pbuf_chain(ofp->rbuf, p);
 	}
 
@@ -553,27 +561,32 @@ static err_t ofp_connected_cb(void *arg, struct tcp_pcb *tcp, err_t err){
 	err_t ret;
 	ofp->alive_until = sys_get_ms() + OFP_TIMEOUT;
 	ofp->next_ping = sys_get_ms() + OFP_PING_INTERVAL;
-	struct ofp_header hdr = {0};
 	if (Zodiac_Config.of_version == 1){
-		hdr.version = 1;
-		hdr.type = OFPT10_HELLO;
-		hdr.length = htons(8);
-		hdr.xid = ofp->xid++;
-		ret = ofp_tx_write(ofp, (char*)&hdr, 8);
+		struct ofp_header hdr = {
+			.version = 1,
+			.type = OFPT10_HELLO,
+			.length = htons(8),
+			.xid = htonl(ofp->xid++),
+		};
+		ret = ofp_tx_write(ofp, &hdr, 8);
 	} else if (Zodiac_Config.of_version == 4){
 		// XXX: add hello elements for negotiation
-		hdr.version = 4;
-		hdr.type = OFPT10_HELLO;
-		hdr.length = htons(8);
-		hdr.xid = ofp->xid++;
-		ret = ofp_tx_write(ofp, (char*)&hdr, 8);
+		struct ofp_header hdr = {
+			.version = 4,
+			.type = OFPT13_HELLO, // same with OFPT10_HELLO
+			.length = htons(8),
+			.xid = htonl(ofp->xid++),
+		};
+		ret = ofp_tx_write(ofp, &hdr, 8);
 	} else {
 		// XXX: add hello elements for negotiation
-		hdr.version = MAX_OFP_VERSION;
-		hdr.type = OFPT10_HELLO;
-		hdr.length = htons(8);
-		hdr.xid = ofp->xid++;
-		ret = ofp_tx_write(ofp, (char*)&hdr, 8);
+		struct ofp_header hdr = {
+			.version = MAX_OFP_VERSION,
+			.type = OFPT13_HELLO, // same with OFPT10_HELLO
+			.length = htons(8),
+			.xid = htonl(ofp->xid++),
+		};
+		ret = ofp_tx_write(ofp, &hdr, 8);
 	}
 	if (ret == OFP_OK){
 		return tcp_output(ofp->tcp);
