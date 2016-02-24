@@ -85,7 +85,7 @@ int field_match13(const void*, int, const void*, int);
 
 struct fx_switch_config {
 	uint16_t flags;
-	uint16_t miss_send_len;
+	uint16_t miss_send_len; // in host byte order
 };
 
 struct fx_table_count {

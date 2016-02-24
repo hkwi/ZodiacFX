@@ -559,13 +559,19 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 			case OFPMP13_PORT_DESC:
 			if(ofp_tx_room(self) < 64){
 				return OFP_NOOP;
+			} else if (length > 16){
+				return ofp13_write_mp_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_LEN);
 			} else {
 				if(self->mp_out_index < 0){
 					self->mp_out_index = 0;
 				}
-				self->mpreq_pos += ofp_rx_read(self, ofp_buffer, length - self->mpreq_pos);
+				uint16_t capacity = ofp_tx_room(self);
+				if(capacity > OFP_BUFFER_LEN){
+					capacity = OFP_BUFFER_LEN;
+				}
+				
 				uint16_t unitlength = fill_ofp13_port_desc(
-					&self->mp_out_index, ofp_buffer+16, ofp_tx_room(self)-16);
+					&self->mp_out_index, ofp_buffer+16, capacity-16);
 				mpres.flags = 0;
 				if(self->mp_out_index >= 0){
 					mpres.flags = htons(OFPMPF13_REPLY_MORE);
@@ -585,20 +591,21 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 				self->mpreq_pos += ofp_rx_read(self, ofp_buffer+16, length-16);
 				mpres.flags = 0;
 				
-				if (length > 64){
-					length = 64;
+				uint16_t tail = length;
+				if (tail > 64){
+					tail = 64;
 				}
 				char reply[12+64];
 				struct ofp_error_msg err = {0};
 				err.header.version = mpreq.header.version;
 				err.header.type = OFPT13_ERROR;
-				err.header.length = htons(12+length);
+				err.header.length = htons(12+tail);
 				err.header.xid = mpreq.header.xid;
 				err.type = htons(OFPET13_BAD_REQUEST);
 				err.code = htons(OFPBRC13_BAD_MULTIPART);
 				memcpy(reply, &err, 12);
-				memcpy(reply+12, ofp_buffer, length);
-				ofp_tx_write(self, reply, 12+length);
+				memcpy(reply+12, ofp_buffer, tail);
+				ofp_tx_write(self, reply, 12+tail);
 			}
 			break;
 		}
@@ -1300,7 +1307,7 @@ static void send_ofp13_packet_in(struct fx_packet *packet, struct ofp13_packet_i
 		if(ofp_tx_room(ofp) < length){
 			continue;
 		}
-		uint32_t xid = ofp->xid++;
+		uint32_t xid = htonl(ofp->xid++);
 		memcpy(ofp_buffer+4, &xid, 4);
 		ofp_tx_write(ofp, ofp_buffer, length);
 		*send_bits &= ~(1<<i);
@@ -1447,10 +1454,13 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 								pin->table_id = msg.table_id;
 								pin->cookie = msg.cookie;
 								
+								pin->packet.in_port = packet->in_port;
+								pin->packet.in_phy_port = packet->in_phy_port;
+								pin->packet.metadata = packet->metadata;
+								pin->packet.tunnel_id = packet->tunnel_id;
 								pbuf_copy(data, packet->data);
-								pin->packet = *packet;
 								pin->packet.data = data;
-								pin->max_len = out->max_len;
+								pin->max_len = ntohs(out->max_len);
 							}
 							break;
 						}
@@ -1517,7 +1527,7 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 				struct ofp13_packet_in msg = {};
 				uint8_t send_bits = 0;
 				msg.buffer_id = htonl(OFP13_NO_BUFFER);
-				if(fx_switch.miss_send_len != htons(OFPCML13_NO_BUFFER)){
+				if(fx_switch.miss_send_len != OFPCML13_NO_BUFFER){
 					send_bits |= 0x80;
 					msg.buffer_id = htonl(fx_buffer_id++);
 				}
@@ -1535,7 +1545,7 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 						send_bits |= 1<<i;
 					}
 				}
-				send_ofp13_packet_in(packet, msg, ntohs(fx_switch.miss_send_len), &send_bits);
+				send_ofp13_packet_in(packet, msg, fx_switch.miss_send_len, &send_bits);
 				if(send_bits != 0){
 					for(int i=0; i<MAX_BUFFERS; i++){
 						struct fx_packet_in *pin = fx_packet_ins+i;

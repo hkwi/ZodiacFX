@@ -247,6 +247,7 @@ enum ofp_pcb_status ofp_write_error(struct ofp_pcb *self, uint16_t ofpet, uint16
 		ofp_rx_read(self, ofp_buffer+12, length);
 	}
 	err.header.length = htons(rlen);
+	memcpy(ofp_buffer, &err, 12);
 	ofp_tx_write(self, ofp_buffer, rlen);
 	if(length < 8){
 		return OFP_CLOSE;
@@ -329,7 +330,7 @@ static enum ofp_pcb_status ofp_negotiation(struct ofp_pcb *self){
 static enum ofp_pcb_status ofp_multipart_complete(struct ofp_pcb *self){
 	if(OF_Version == 4){
 		return ofp13_multipart_complete(self);
-	};
+	}
 	return OFP_OK;
 }
 
@@ -372,7 +373,7 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 					.version = OF_Version,
 					.type = OFPT10_ECHO_REPLY,
 					.length = htons(8),
-					.xid = htonl(req.xid),
+					.xid = req.xid,
 				};
 				ofp_tx_write(self, &rep, 8);
 				ret = OFP_OK;
@@ -391,20 +392,18 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 				case OFPT13_BARRIER_REQUEST:
 				if(self->mpreq_on){
 					ret = ofp_write_error(self, OFPET13_BAD_REQUEST, OFPBRC13_MULTIPART_BUFFER_OVERFLOW);
+				} else if(ofp_rx_length(self) < length || ofp_tx_room(self) < 8){
+					ret = OFP_NOOP;
 				} else {
-					if(ofp_rx_length(self) < length || ofp_tx_room(self) < 8){
-						ret = OFP_NOOP;
-					} else {
-						self->rskip += length;
-						struct ofp_header rep = {
-							.version = 4,
-							.type = OFPT13_BARRIER_REPLY,
-							.length = htons(8),
-							.xid = req.xid,
-						};
-						ofp_tx_write(self, &rep, 8);
-						ret = OFP_OK;
-					}
+					self->rskip += length;
+					struct ofp_header rep = {
+						.version = 4,
+						.type = OFPT13_BARRIER_REPLY,
+						.length = htons(8),
+						.xid = req.xid,
+					};
+					ofp_tx_write(self, &rep, 8);
+					ret = OFP_OK;
 				}
 				break;
 				
