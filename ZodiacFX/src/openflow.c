@@ -149,6 +149,15 @@ static void ofp_unreach(void){
 	while(1){ hook++; }
 }
 
+static void ofp_update(struct ofp_pcb *self){
+	while(self->rbuf != NULL && self->rskip >= self->rbuf->len){
+		struct pbuf *head = self->rbuf;
+		self->rskip -= self->rbuf->len;
+		self->rbuf = pbuf_dechain(head);
+		pbuf_free(head);
+	}
+}
+
 uint16_t ofp_rx_length(const struct ofp_pcb *self){
 	if(self->rbuf == NULL) return 0;
 	return self->rbuf->tot_len - self->rskip;
@@ -190,7 +199,7 @@ uint16_t ofp_tx_write(struct ofp_pcb *pcb, const void *data, uint16_t length){
 	return 0;
 }
 
-#define CONNECT_RETRY_INTERVAL 3000U /* 1 sec */
+#define CONNECT_RETRY_INTERVAL 3000U /* 3 sec */
 #define OFP_PING_INTERVAL 7000U // 7sec
 #define OFP_TIMEOUT 60000U // 1 min
 
@@ -442,12 +451,6 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 			break;
 		}
 	}
-	while(self->rbuf != NULL && self->rskip >= self->rbuf->len){
-		struct pbuf *head = self->rbuf;
-		self->rskip -= self->rbuf->len;
-		self->rbuf = pbuf_dechain(head);
-		pbuf_free(head);
-	}
 	if (OFP_OK == ret){
 		ofp_async();
 	}
@@ -492,13 +495,14 @@ static err_t ofp_sent_cb(void *arg, struct tcp_pcb *tcp, u16_t len){
 	ofp->alive_until = sys_get_ms() + OFP_TIMEOUT;
 	switch(ofp_handle(ofp)){
 		case OFP_OK:
-			return tcp_output(ofp->tcp);
+			tcp_output(ofp->tcp);
+			break;
 		case OFP_CLOSE:
 			tcp_output(ofp->tcp);
 			return ofp_close(ofp, CONNECT_RETRY_INTERVAL);
-		default:
-			return ERR_OK;
 	}
+	ofp_update(ofp);
+	return ERR_OK;
 }
 
 static err_t ofp_recv_cb(void *arg, struct tcp_pcb *tcp, struct pbuf *p, err_t err){
@@ -518,31 +522,32 @@ static err_t ofp_recv_cb(void *arg, struct tcp_pcb *tcp, struct pbuf *p, err_t e
 		return ofp_close(ofp, CONNECT_RETRY_INTERVAL);
 	}
 	
-	uint16_t room = RECV_BUFLEN;
-	if(ofp->rbuf){
-		room -= ofp->rbuf->tot_len;
-	}
-	if(p->tot_len > room){
-		tcp_recved(tcp, room);
-		pbuf_realloc(p, room);
-	} else {
+	// there are very limited number of POOL mem
+	struct pbuf *n = pbuf_alloc(PBUF_RAW, p->tot_len, PBUF_RAM);
+	if(n != NULL){
+		// not pbuf_copy because p was queue
+		pbuf_copy_partial(p, ofp_buffer, p->tot_len, 0);
+		pbuf_take(n, ofp_buffer, p->tot_len);
+		pbuf_free(p);
 		tcp_recved(tcp, p->tot_len);
+		if(ofp->rbuf == NULL){
+			ofp->rbuf = n;
+		}else{
+			pbuf_chain(ofp->rbuf, n);
+		}
 	}
-	if(ofp->rbuf == NULL){
-		ofp->rbuf = p;
-	} else {
-		pbuf_chain(ofp->rbuf, p);
-	}
-
 	ofp->alive_until = sys_get_ms() + OFP_TIMEOUT;
 	switch(ofp_handle(ofp)){
 		case OFP_OK:
-			return tcp_output(ofp->tcp);
-		case OFP_NOOP:
-			return ERR_OK;
+			tcp_output(ofp->tcp);
+			break;
 		case OFP_CLOSE:
 			tcp_output(ofp->tcp);
 			return ofp_close(ofp, CONNECT_RETRY_INTERVAL);
+	}
+	ofp_update(ofp);
+	if(n == NULL){
+		return ERR_BUF;
 	}
 	return ERR_OK;
 }
@@ -686,6 +691,7 @@ void openflow_task(){
 			continue;
 		}
 		c->ofp.alive_until = sys_get_ms() + CONNECT_RETRY_INTERVAL;
+		tcp_nagle_disable(tcp);
 		tcp_arg(tcp, &(c->ofp));
 		tcp_err(tcp, ofp_err_cb);
 		tcp_recv(tcp, ofp_recv_cb);

@@ -1378,6 +1378,16 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 		}
 		break;
 		
+		case OXM_OF_VLAN_VID:
+		if((oob->vlan & htons(0x1000)) != 0){
+			data[14] = (data[14] & 0xF0) | o[4];
+			data[15] = o[5];
+			oob->vlan &= htons(0xf000);
+			oob->vlan |= (o[4]<<8) | o[5];
+		}else{
+			//
+		}
+		
 		// TODO: implement more
 		
 		// OXM_OF_IPV6_EXTDR not valid by spec.
@@ -1403,7 +1413,7 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 				if(disable_ofp_pipeline == false){
 					uint8_t p = 0;
 					for(int i=0; i<MAX_PORTS; i++){
-						if(Zodiac_Config.of_port[i]==1 && i != (int)ntohl(packet->in_port)-1){
+						if(Zodiac_Config.of_port[i]==1 && i != port){
 							p |= 1<<i;
 							fx_port_counts[i].tx_packets++;
 						}
@@ -1482,31 +1492,32 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 			struct ofp13_action_push *ap = action;
 			uint16_t vlan = oob->vlan & htons(0xEFFF); // clear CFI
 			// pbuf can't grow as of lwip 1.4
-			uint8_t tmp[GMAC_FRAME_LENTGH_MAX];
-			uint16_t tmplen = packet->data->tot_len + 4;
-			pbuf_copy_partial(packet->data, tmp, 12, 0);
-			*(uint16_t*)((uintptr_t)tmp + 12) = ap->ethertype;
-			*(uint16_t*)((uintptr_t)tmp + 14) = vlan;
-			pbuf_copy_partial(packet->data, (void*)((uintptr_t)tmp + 16), packet->data->tot_len - 12, 12);
-			pbuf_type t = packet->data->type;
-			pbuf_free(packet->data);
+			uint16_t len = packet->data->tot_len;
+			pbuf_copy_partial(packet->data, ofp_buffer, 12, 0);
+			*(uint16_t*)((uintptr_t)ofp_buffer + 12) = ap->ethertype;
+			*(uint16_t*)((uintptr_t)ofp_buffer + 14) = vlan;
+			pbuf_copy_partial(packet->data, ofp_buffer+16, len - 12, 12);
+			len += 4;
 			
-			struct pbuf *data = pbuf_alloc(PBUF_RAW, tmplen, t);
-			if(data != NULL){
-				memcpy(data->payload, tmp, tmplen);
+			pbuf_free(packet->data);
+			struct pbuf *data = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
+			if(data != NULL || ERR_OK == pbuf_take(data, ofp_buffer, len)){
 				packet->data = data;
 				create_oob(packet->data, oob);
 			}else{
-				// should not happen. because same type one pbuf was already freed
+				// should not happen. because one pbuf was already freed
 			}
 		}
 		break;
 		
 		case OFPAT13_POP_VLAN:
 		if((oob->vlan & htons(0x1000)) != 0){
-			struct pbuf *data = packet->data;
-			memmove((void*)((uintptr_t)data->payload + 12), (void*)((uintptr_t)data->payload + 16), data->tot_len - 16);
-			pbuf_realloc(data, data->tot_len-16);
+			uint16_t len = packet->data->tot_len;
+			pbuf_copy_partial(packet->data, ofp_buffer, 12, 0);
+			pbuf_copy_partial(packet->data, ofp_buffer+12, len - 16, 16);
+			len -= 4;
+			pbuf_realloc(packet->data, len);
+			pbuf_take(packet->data, ofp_buffer, len);
 			create_oob(packet->data, oob);
 		}
 		break;
@@ -1771,7 +1782,7 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 		case OFPT13_PACKET_OUT:
 		if(ofp_rx_length(self) < length || ofp_tx_room(self) < 12+64){
 			// noop
-		}else if(length < 24){
+		} else if(length < 24){
 			return ofp_write_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_LEN);
 		} else {
 			struct ofp13_packet_out hint;
@@ -1814,7 +1825,7 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 				uint16_t len = offsetof(struct ofp13_packet_out, actions);
 				len += ntohs(hint.actions_len);
 				
-				struct pbuf *data = pbuf_alloc(PBUF_RAW, length-len, PBUF_POOL);
+				struct pbuf *data = pbuf_alloc(PBUF_RAW, length-len, PBUF_RAM);
 				if(data == NULL){ // out-of memory
 					free(actions);
 					return ofp_write_error(self, OFPET13_BAD_REQUEST, OFPBRC13_EPERM);
@@ -1822,7 +1833,8 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 				
 				uint16_t offset = offsetof(struct ofp13_packet_out, actions);
 				pbuf_copy_partial(self->rbuf, actions, ntohs(hint.actions_len), self->rskip+offset);
-				pbuf_copy_partial(self->rbuf, data->payload, length-len, self->rskip+len);
+				pbuf_copy_partial(self->rbuf, ofp_buffer, length-len, self->rskip+len);
+				pbuf_take(data, ofp_buffer, length-len);
 				packet.data = data;
 			}
 			struct fx_packet_oob oob;
@@ -1840,6 +1852,7 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 				// xxx: check more
 				p += ntohs(act->len);
 			}
+			p = (uintptr_t)actions;
 			while(p < endp){
 				struct ofp13_action_header *act = (void*)p;
 				execute_ofp13_action(&packet, &oob, act, -1);

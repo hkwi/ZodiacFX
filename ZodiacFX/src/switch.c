@@ -310,13 +310,15 @@ void gmac_write(const void *buffer, uint16_t ul_size, uint8_t port){
 		port = n;
 	}
 	// switch discards frames less than 64 bytes (ethernet minimum size)
-	uint8_t tx_buffer[1536];
+	uint8_t tx_buffer[GMAC_FRAME_LENTGH_MAX];
 	uint32_t tx_buffer_length;
 	if (ul_size < 60){ // Add padding to 60 bytes (60 + 4(FCS)==64)
 		tx_buffer_length = 60;
 		memset(tx_buffer, 0, 61);
-	} else {
+	} else if (ul_size < GMAC_FRAME_LENTGH_MAX) {
 		tx_buffer_length = ul_size;
+	} else {
+		return;
 	}
 	memcpy(tx_buffer, buffer, ul_size);
 	uint8_t *last_byte = (void*)((uintptr_t)tx_buffer + tx_buffer_length);
@@ -713,7 +715,7 @@ void switch_task(struct netif *netif){
 		// PBUF_ROM or PBUF_REF fails with ICMP handling: not yet implemented in LWIP.
 		struct pbuf *frame = pbuf_alloc(PBUF_RAW, rx_buffer_length, PBUF_POOL);
 		if(frame!=NULL){
-			memcpy(frame->payload, rx_buffer, rx_buffer_length);
+			pbuf_take(frame, rx_buffer, rx_buffer_length);
 			if(tag<4 && Zodiac_Config.of_port[tag]==1){ // XXX: port number hardcoded here
 				if(disable_ofp_pipeline == false){
 					fx_port_counts[tag].rx_packets++;
