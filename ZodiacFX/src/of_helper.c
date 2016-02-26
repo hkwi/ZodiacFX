@@ -344,10 +344,10 @@ bool oxm_strict_equals(const void *oxm_a, int len_a, const void *oxm_b, int len_
 *	@param *match_b - pointer to the second match field
 *
 */
-int field_match13(const void *oxm_a, int len_a, const void *oxm_b, int len_b){
+bool field_match13(const void *oxm_a, int len_a, const void *oxm_b, int len_b){
 	uint32_t prereq_a = match_prereq(oxm_a, len_a);
 	if ((prereq_a & PREREQ_INVALID) != 0){
-		return 0;
+		return false;
 	}
 	uintptr_t bhdr = (uintptr_t)oxm_b;
 	while(bhdr < (uintptr_t)oxm_b + len_b){
@@ -363,20 +363,20 @@ int field_match13(const void *oxm_a, int len_a, const void *oxm_b, int len_b){
 					if(OXM_HASMASK(afield)){
 						for(int i=0; i<length; i++){
 							if ((a[4+length+i] & b[4+length+i]) != a[4+length+i]){
-								return 0;
+								return false;
 							}
 						}
 					}
 					for(int i=0; i<length; i++){
 						if ((a[4+i] & b[4+length+i]) != b[4+i]){
-							return 0;
+							return false;
 						}
 					}
 					break;
 				}else if (memcmp(a+4, b+4, OXM_LENGTH(bfield))==0){
 					break;
 				}else{
-					return 0;
+					return false;
 				}
 			}
 			switch(bfield){
@@ -475,13 +475,13 @@ int field_match13(const void *oxm_a, int len_a, const void *oxm_b, int len_b){
 
 	uint32_t prereq_b = match_prereq(oxm_b, len_b);
 	if ((prereq_b & PREREQ_INVALID) != 0){
-		return 0;
+		return false;
 	}
-	if (((prereq_a & PREREQ_ETH_TYPE_MASK) & ~(prereq_b & PREREQ_ETH_TYPE_MASK)) != (prereq_a & PREREQ_ETH_TYPE_MASK)){
-		return 0;
+	if (((prereq_a & PREREQ_ETH_TYPE_MASK) & (prereq_b & PREREQ_ETH_TYPE_MASK)) != (prereq_a & PREREQ_ETH_TYPE_MASK)){
+		return false;
 	}
-	if (((prereq_a & PREREQ_ND_MASK) & ~(prereq_b & PREREQ_ND_MASK)) != (prereq_a & PREREQ_ND_MASK)){
-		return 0;
+	if (((prereq_a & PREREQ_ND_MASK) & (prereq_b & PREREQ_ND_MASK)) != (prereq_a & PREREQ_ND_MASK)){
+		return false;
 	}
 	if ((prereq_b & PREREQ_VLAN) != 0) {
 		uintptr_t ahdr = (uintptr_t)oxm_a;
@@ -494,14 +494,14 @@ int field_match13(const void *oxm_a, int len_a, const void *oxm_b, int len_b){
 					}
 				case OXM_OF_VLAN_VID:
 					if (ntohs(*(uint16_t*)(ahdr+4)) == OFPVID13_NONE){
-						return 0;
+						return false;
 					}
 					break;
 			}
 			ahdr += 4 + OXM_LENGTH(afield);
 		}
 	}
-	return 1;
+	return true;
 }
 
 

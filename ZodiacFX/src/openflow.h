@@ -72,17 +72,6 @@ struct controller {
 	struct ofp_pcb ofp;
 };
 
-void openflow_init(void);
-void openflow_task(void);
-void openflow_pipeline(struct pbuf*, uint32_t);
-uint16_t ofp_rx_length(const struct ofp_pcb*);
-uint16_t ofp_rx_read(struct ofp_pcb*, void*, uint16_t);
-uint16_t ofp_tx_room(const struct ofp_pcb*);
-uint16_t ofp_tx_write(struct ofp_pcb*, const void*, uint16_t);
-uint16_t ofp_set_error(const void*, uint16_t, uint16_t);
-
-int field_match13(const void*, int, const void*, int);
-
 struct fx_switch_config {
 	uint16_t flags;
 	uint16_t miss_send_len; // in host byte order
@@ -95,18 +84,20 @@ struct fx_table_count {
 #define MAX_TABLES 10 // must be smaller than OFPTT13_MAX
 
 struct fx_packet { // in network byte order
-	struct pbuf *data;
+	uint16_t capacity; // in host byte order
+	uint16_t length; // in host byte order
+	uint8_t *data;
+	bool malloced;
 	// pipeline fields
 	uint32_t in_port;
+	uint32_t in_phy_port;
 	uint64_t metadata;
 	uint64_t tunnel_id;
-	uint32_t in_phy_port;
 };
 struct fx_packet_oob { // in network byte order
 	// cache
-	uint16_t vlan;
-	uint16_t eth_type;
-	uint16_t eth_offset;
+	uint8_t vlan[2]; // we use CFI bit for VLAN_PRESENT
+	uint16_t eth_type_offset;
 	// pipeline
 	uint16_t action_set_oxm_length; // in host byte order
 	void *action_set_oxm; // malloc-ed oxm
@@ -124,7 +115,7 @@ struct fx_packet_in { // in network byte order
 };
 #define MAX_BUFFERS 16
 #define BUFFER_TIMEOUT 5000U /* ms */
-void create_oob(struct pbuf*, struct fx_packet_oob*);
+void sync_oob(struct fx_packet*, struct fx_packet_oob*);
 
 // in host byte order
 struct fx_flow {
@@ -212,6 +203,18 @@ struct fx_group_bucket {
 #define MAX_GROUPS 0
 #define MAX_GROUP_BUCKETS 0
 
+void openflow_init(void);
+void openflow_task(void);
+void openflow_pipeline(struct fx_packet*);
+uint16_t ofp_rx_length(const struct ofp_pcb*);
+uint16_t ofp_rx_read(struct ofp_pcb*, void*, uint16_t);
+uint16_t ofp_tx_room(const struct ofp_pcb*);
+uint16_t ofp_tx_write(struct ofp_pcb*, const void*, uint16_t);
+uint16_t ofp_set_error(const void*, uint16_t, uint16_t);
+
+bool field_match13(const void*, int, const void*, int);
+
+
 // openflow message handling
 enum ofp_pcb_status ofp_write_error(struct ofp_pcb*, uint16_t, uint16_t);
 enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb*);
@@ -219,8 +222,8 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb*);
 
 // flow processing
 int lookup_fx_table(const struct fx_packet*, const struct fx_packet_oob*, uint8_t);
-int match_frame_by_oxm(const struct fx_packet*, const struct fx_packet_oob*, const void*, uint16_t);
-int match_frame_by_tuple(const struct fx_packet*, const struct fx_packet_oob*, struct ofp_match);
+bool match_frame_by_oxm(const struct fx_packet*, const struct fx_packet_oob*, const void*, uint16_t);
+bool match_frame_by_tuple(const struct fx_packet*, const struct fx_packet_oob*, struct ofp_match);
 void execute_ofp13_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
 void execute_ofp10_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
 
@@ -229,3 +232,10 @@ void send_ofp13_port_status(void);
 void send_ofp13_flow_rem(void);
 void timeout_ofp13_flows(void);
 void check_ofp13_packet_in(void);
+
+static const uint8_t ETH_TYPE_VLAN[] = { 0x81, 0x00 };
+static const uint8_t ETH_TYPE_VLAN2[] = { 0x88, 0xa8 }; // QinQ
+static const uint8_t ETH_TYPE_IPV4[] = { 0x08, 0x00 };
+static const uint8_t ETH_TYPE_IPV6[] = { 0x86, 0xdd };
+
+	

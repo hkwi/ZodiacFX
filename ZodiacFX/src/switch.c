@@ -712,21 +712,27 @@ void switch_task(struct netif *netif){
 		// switch is configured to work in tail tag mode
 		rx_buffer_length--;
 		uint8_t tag = rx_buffer[rx_buffer_length];
-		// PBUF_ROM or PBUF_REF fails with ICMP handling: not yet implemented in LWIP.
-		struct pbuf *frame = pbuf_alloc(PBUF_RAW, rx_buffer_length, PBUF_POOL);
-		if(frame!=NULL){
-			pbuf_take(frame, rx_buffer, rx_buffer_length);
-			if(tag<4 && Zodiac_Config.of_port[tag]==1){ // XXX: port number hardcoded here
-				if(disable_ofp_pipeline == false){
-					fx_port_counts[tag].rx_packets++;
-					openflow_pipeline(frame, tag+1);
-				}
-			} else{
-				netif->input(frame, netif);
+		if(tag<4 && Zodiac_Config.of_port[tag]==1){ // XXX: port number hardcoded here
+			if(disable_ofp_pipeline == false){
+				struct fx_packet frame = {
+					.length = rx_buffer_length,
+					.capacity = GMAC_FRAME_LENTGH_MAX,
+					.data = rx_buffer,
+					.in_port = htonl(tag+1),
+				};
+				fx_port_counts[tag].rx_packets++;
+				openflow_pipeline(&frame);
 			}
-			pbuf_free(frame);
-		}else{
-			switch_unreach();
+		} else{
+			// PBUF_ROM or PBUF_REF fails with ICMP handling: not yet implemented in LWIP.
+			struct pbuf *frame = pbuf_alloc(PBUF_RAW, rx_buffer_length, PBUF_POOL);
+			if(frame!=NULL){
+				pbuf_take(frame, rx_buffer, rx_buffer_length);
+				netif->input(frame, netif);
+				pbuf_free(frame);
+			}else{
+				switch_unreach();
+			}
 		}
 	}
 	return;

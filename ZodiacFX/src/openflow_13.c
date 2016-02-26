@@ -596,13 +596,16 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 					tail = 64;
 				}
 				char reply[12+64];
-				struct ofp_error_msg err = {0};
-				err.header.version = mpreq.header.version;
-				err.header.type = OFPT13_ERROR;
-				err.header.length = htons(12+tail);
-				err.header.xid = mpreq.header.xid;
-				err.type = htons(OFPET13_BAD_REQUEST);
-				err.code = htons(OFPBRC13_BAD_MULTIPART);
+				struct ofp_error_msg err = {
+					.header = {
+						.version = mpreq.header.version,
+						.type = OFPT13_ERROR,
+						.length = htons(12+tail),
+						.xid = mpreq.header.xid,
+					},
+					.type = htons(OFPET13_BAD_REQUEST),
+					.code = htons(OFPBRC13_BAD_MULTIPART),
+				};
 				memcpy(reply, &err, 12);
 				memcpy(reply+12, ofp_buffer, tail);
 				ofp_tx_write(self, reply, 12+tail);
@@ -962,7 +965,8 @@ static int bits_on(const uint8_t *data, int len){
 	return r;
 }
 
-int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oob *oob, const void *oxm, uint16_t oxm_length){
+bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oob *oob, const void *oxm, uint16_t oxm_length){
+	const uint8_t *data = packet->data;
 	int count = 0;
 	for(const uint8_t *pos=oxm; pos<(const uint8_t*)oxm+oxm_length; pos+=4+pos[3]){
 		if(pos[0]==0x80 && pos[1]==0x00){
@@ -970,13 +974,13 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 			switch(pos[2]>>1){
 				case OFPXMT13_OFB_IN_PORT:
 				if(packet->in_port != *(uint32_t*)((uintptr_t)pos + 4)){
-					return -1;
+					return false;
 				}
 				break;
 				
 				case OFPXMT13_OFB_IN_PHY_PORT:
 				if(packet->in_phy_port != *(uint32_t*)((uintptr_t)pos + 4)){
-					return -1;
+					return false;
 				}
 				break;
 				
@@ -990,224 +994,216 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 						count += 64;
 					}
 					if(value != *(uint64_t*)((uintptr_t)pos + 4)){
-						return -1;
+						return false;
 					}
 				}
 				break;
 				
 				case OFPXMT13_OFB_ETH_DST:
-				{
-					char mac[6];
-					pbuf_copy_partial(packet->data, mac, 6, 0);
-					if(has_mask){
-						for(int i=0; i<6; i++){
-							mac[i] &= pos[10+i];
+				if(has_mask){
+					for(int i=0; i<6; i++){
+						if((data[i] & pos[10+i]) != pos[4+i]){
+							return false;
 						}
-						count += bits_on(pos+10, 6);
-					}else{
-						count += 48;
 					}
-					if(memcmp(mac, pos+4, 6) != 0){
-						return -1;
+					count += bits_on(pos+10, 6);
+				}else{
+					for(int i=0; i<6; i++){
+						if(data[i] != pos[4+i]){
+							return false;
+						}
 					}
+					count += 48;
 				}
 				break;
 				
 				case OFPXMT13_OFB_ETH_SRC:
-				{
-					char mac[6];
-					pbuf_copy_partial(packet->data, mac, 6, 6);
-					if(has_mask){
-						for(int i=0; i<6; i++){
-							mac[i] &= pos[10+i];
+				if(has_mask){
+					for(int i=0; i<6; i++){
+						if((data[6+i] & pos[10+i]) != pos[4+i]){
+							return false;
 						}
-						count += bits_on(pos+10, 6);
-					} else {
-						count += 48;
 					}
-					if(memcmp(mac, pos+4, 6) != 0){
-						return -1;
+					count += bits_on(pos+10, 6);
+					}else{
+					for(int i=0; i<6; i++){
+						if(data[6+i] != pos[4+i]){
+							return false;
+						}
 					}
+					count += 48;
 				}
 				break;
 				
 				case OFPXMT13_OFB_ETH_TYPE:
-				if(oob->eth_type != *(uint16_t*)((uintptr_t)pos + 4)){
-					return -1;
+				if(memcmp(packet->data + oob->eth_type_offset, pos+4, 2)!=0){
+					return false;
 				}
 				break;
 				
 				case OFPXMT13_OFB_VLAN_VID:
-				{
-					uint16_t vlan;
-					if(has_mask){
-						memcpy(&vlan, pos+6, 2);
-						vlan &= oob->vlan & htons(0x1FFF);
-						count += bits_on(pos+6, 2);
-					} else {
-						vlan = oob->vlan & htons(0x1FFF);
-						count += 16;
+				if(has_mask){
+					if((oob->vlan[0] & pos[6]) != pos[4]){
+						return false;
 					}
-					if(memcmp(&vlan, pos+4, 2) != 0){
-						return -1;
+					if((oob->vlan[1] & pos[7]) != pos[5]){
+						return false;
 					}
+					count += bits_on(pos+6, 2);
+				} else {
+					if((oob->vlan[0] & 0x1F) != pos[4]){
+						return false;
+					}
+					if(oob->vlan[1] != pos[5]){
+						return false;
+					}
+					count += 16;
 				}
 				break;
 				
 				case OFPXMT13_OFB_VLAN_PCP:
-				{
-					if((oob->vlan & htons(0x1000)) == 0){
-						return -1;
+				if(has_mask){
+					if(((oob->vlan[0]>>5) & pos[5]) != pos[4]){
+						return false;
 					}
-					uint8_t pcp;
-					pcp = ntohs(oob->vlan)>>13;
-					if(has_mask){
-						pcp &= pos[5];
-						count += bits_on(pos+5, 1);
-					} else {
-						count += 8;
+					count += bits_on(pos+5, 1);
+				}else{
+					if(oob->vlan[0]>>5 != pos[4]){
+						return false;
 					}
-					if(pcp != pos[4]){
-						return -1;
-					}
+					count += 3;
 				}
 				break;
 				
 				case OFPXMT13_OFB_IP_DSCP:
-				{
-					uint8_t dscp;
-					if(oob->eth_type == htons(0x0800)){
-						struct ip_hdr *hdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
-						dscp = IPH_TOS(hdr)>>2;
-					} else if(oob->eth_type == htons(0x86dd)){
-						return -1; // TODO
-					} else {
-						return -1;
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
+					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if(IPH_TOS(hdr)>>2 != pos[4]){
+						return false;
 					}
-					if(dscp != pos[4]){
-						return -1;
-					}
+				} else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+					return false; // TODO
+				} else {
+					return false;
 				}
 				break;
 				
 				case OFPXMT13_OFB_IP_ECN:
-				{
-					uint8_t ecn;
-					if(oob->eth_type == htons(0x0800)){
-						struct ip_hdr *hdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
-						ecn = IPH_TOS(hdr)&0x03;
-					} else if(oob->eth_type == htons(0x86dd)){
-						return -1; // TODO
-					} else {
-						return -1;
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
+					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if((IPH_TOS(hdr)&0x03) != pos[4]){
+						return false;
 					}
-					if(ecn != pos[4]){
-						return -1;
-					}
+				} else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+					return false; // TODO
+				} else {
+					return false;
 				}
 				break;
 				
 				case OFPXMT13_OFB_IPV4_SRC:
-				if(oob->eth_type == htons(0x0800)){
-					struct ip_hdr *hdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
-					uint32_t value;
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)!=0){
+					return false;
+				}else{
+					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(has_mask){
-						memcpy(&value, pos+8, 4);
-						value &= hdr->src.addr;
+						if((hdr->src.addr & *(uint32_t*)((uintptr_t)pos+8)) != *(uint32_t*)((uintptr_t)pos+4)){
+							return false;
+						}
 						count += bits_on(pos+8, 4);
 					} else {
-						value = hdr->src.addr;
+						if(hdr->src.addr != *(uint32_t*)((uintptr_t)pos+4)){
+							return false;
+						}
 						count += 32;
-					}
-					if(memcmp(&value, pos+4, 4)!=0){
-						return -1;
 					}
 				}
 				break;
 				
 				case OFPXMT13_OFB_IPV4_DST:
-				if(oob->eth_type == htons(0x0800)){
-					struct ip_hdr *hdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
-					uint32_t value;
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)!=0){
+					return false;
+				}else{
+					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(has_mask){
-						memcpy(&value, pos+8, 4);
-						value &= hdr->dest.addr;
+						if((hdr->dest.addr & *(uint32_t*)((uintptr_t)pos+8)) != *(uint32_t*)((uintptr_t)pos+4)){
+							return false;
+						}
 						count += bits_on(pos+8, 4);
 					} else {
-						value = hdr->dest.addr;
+						if(hdr->dest.addr != *(uint32_t*)((uintptr_t)pos+4)){
+							return false;
+						}
 						count += 32;
-					}
-					if(memcmp(&value, pos+4, 4)!=0){
-						return -1;
 					}
 				}
 				break;
-				
+
 				case OFPXMT13_OFB_TCP_SRC:
-				{
-					if(oob->eth_type != htons(0x0800)){
-						return -1;
-					}
-					struct ip_hdr *iphdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
+					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=6){
-						return -1;
+						return false;
 					}
-					struct tcp_hdr *tcphdr = (void*)((uintptr_t)packet->data->payload
-						+ oob->eth_offset + IPH_HL(iphdr) * 4);
+					struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
 					if(tcphdr->src != *(uint16_t*)((uintptr_t)pos + 4)){
-						return -1;
+						return false;
 					}
+				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+					return false; // TODO
+				}else{
+					return false;
 				}
 				break;
 				
 				case OFPXMT13_OFB_TCP_DST:
-				{
-					if(oob->eth_type != htons(0x0800)){
-						return -1;
-					}
-					struct ip_hdr *iphdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
+					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=6){
-						return -1;
+						return false;
 					}
-					struct tcp_hdr *tcphdr = (void*)((uintptr_t)packet->data->payload
-						+ oob->eth_offset + IPH_HL(iphdr) * 4);
-					if(memcmp(&(tcphdr->dest), pos+4, 2) != 0){
-						return -1;
+					struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+					if(tcphdr->dest != *(uint16_t*)((uintptr_t)pos + 4)){
+						return false;
 					}
+				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+					return false; // TODO
+				}else{
+					return false;
 				}
 				break;
 				
 				case OFPXMT13_OFB_UDP_SRC:
-				{
-					if(oob->eth_type != htons(0x0800)){
-						return -1;
-					}
-					struct ip_hdr *iphdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
+					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=6){
-						return -1;
+						return false;
 					}
-					struct udp_hdr *udphdr = (void*)((uintptr_t)packet->data->payload
-						+ oob->eth_offset + IPH_HL(iphdr) * 4);
-					if(memcmp(&(udphdr->src), pos+4, 2) != 0){
-						return -1;
+					struct tcp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+					if(udphdr->src != *(uint16_t*)((uintptr_t)pos + 4)){
+						return false;
 					}
+				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+					return false; // TODO
+				}else{
+					return false;
 				}
 				break;
 				
 				case OFPXMT13_OFB_UDP_DST:
-				{
-					if(oob->eth_type != htons(0x0800)){
-						return -1;
-					}
-					struct ip_hdr *iphdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
+					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=6){
-						return -1;
+						return false;
 					}
-					struct udp_hdr *udphdr = (void*)((uintptr_t)packet->data->payload
-						+ oob->eth_offset + IPH_HL(iphdr) * 4);
-					if(memcmp(&(udphdr->dest), pos+4, 2) != 0){
-						return -1;
+					struct tcp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+					if(udphdr->dest != *(uint16_t*)((uintptr_t)pos + 4)){
+						return false;
 					}
+				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+					return false; // TODO
+				}else{
+					return false;
 				}
 				break;
 				
@@ -1215,35 +1211,31 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 				// SCTP_DST
 				
 				case OFPXMT13_OFB_ICMPV4_TYPE:
-				{
-					if(oob->eth_type != htons(0x0800)){
-						return -1;
-					}
-					struct ip_hdr *iphdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)!=0){
+					return false;
+				}else{
+					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=1){
-						return -1;
+						return false;
 					}
-					uint8_t *hdr = (void*)((uintptr_t)packet->data->payload
-						+ oob->eth_offset + IPH_HL(iphdr) * 4);
+					const uint8_t *hdr = (void*)(packet->data + oob->eth_type_offset + IPH_HL(iphdr) * 4);
 					if(hdr[0] != pos[4]){
-						return -1;
+						return false;
 					}
 				}
 				break;
 				
 				case OFPXMT13_OFB_ICMPV4_CODE:
-				{
-					if(oob->eth_type != htons(0x0800)){
-						return -1;
-					}
-					struct ip_hdr *iphdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)!=0){
+					return false;
+				}else{
+					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=1){
-						return -1;
+						return false;
 					}
-					uint8_t *hdr = (void*)((uintptr_t)packet->data->payload
-						+ oob->eth_offset + IPH_HL(iphdr) * 4);
+					const uint8_t *hdr = (void*)(packet->data + oob->eth_type_offset + IPH_HL(iphdr) * 4);
 					if(hdr[1] != pos[4]){
-						return -1;
+						return false;
 					}
 				}
 				break;
@@ -1253,48 +1245,40 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 	return count;
 }
 
-static void send_ofp13_packet_in(struct fx_packet *packet, struct ofp13_packet_in base, uint16_t max_len, uint8_t *send_bits){
-	if(max_len == OFPCML13_NO_BUFFER || max_len > packet->data->tot_len){
-		max_len = packet->data->tot_len;
+static void send_ofp13_packet_in(struct ofp13_packet_in base, struct fx_packet *packet, uint16_t max_len, uint8_t *send_bits){
+	if(max_len == OFPCML13_NO_BUFFER || max_len > packet->length){
+		max_len = packet->length;
 	} // max_len is send_len
-	
-	base.header.type = OFPT13_PACKET_IN;
-	base.header.version = 4;
-	base.total_len = htons(packet->data->tot_len);
 	
 	char oxm[32];
 	uint16_t oxm_length = 0;
 	if(packet->in_port != 0){
-		uint32_t field = htonl(OXM_OF_IN_PORT);
-		memcpy(oxm+oxm_length, &field, 4);
+		*(uint32_t*)((uintptr_t)oxm+oxm_length) = htonl(OXM_OF_IN_PORT);
 		memcpy(oxm+oxm_length+4, &packet->in_port, 4);
 		oxm_length += 8;
 	}
 	if(packet->metadata != 0){
-		uint32_t field = htonl(OXM_OF_METADATA);
-		memcpy(oxm+oxm_length, &field, 4);
+		*(uint32_t*)((uintptr_t)oxm+oxm_length) = htonl(OXM_OF_METADATA);
 		memcpy(oxm+oxm_length+4, &packet->metadata, 8);
 		oxm_length += 12;
 	}
 	if(packet->tunnel_id != 0){
-		uint32_t field = htonl(OXM_OF_TUNNEL_ID);
-		memcpy(oxm+oxm_length, &field, 4);
+		*(uint32_t*)((uintptr_t)oxm+oxm_length) = htonl(OXM_OF_TUNNEL_ID);
 		memcpy(oxm+oxm_length+4, &packet->tunnel_id, 8);
 		oxm_length += 12;
 	}
-	base.match.type = htons(OFPMT13_OXM);
-	base.match.length = htons(4 + oxm_length);
+	uint16_t length = offsetof(struct ofp13_packet_in, match) + ALIGN8(4+oxm_length) + 2 + max_len;
 	
-	uint16_t length = offsetof(struct ofp13_packet_in, match);
-	length += ALIGN8(4+oxm_length) + 2 + max_len;
 	base.header.length = htons(length);
+	base.total_len = htons(packet->length);
+	base.match.length = htons(4 + oxm_length);
 	
 	memset(ofp_buffer, 0, length);
 	memcpy(ofp_buffer, &base, sizeof(struct ofp13_packet_in));
-	memcpy(ofp_buffer+offsetof(struct ofp13_packet_in, match)+4, oxm, oxm_length);
-	pbuf_copy_partial(packet->data,
-		ofp_buffer+offsetof(struct ofp13_packet_in, match)+ALIGN8(4+oxm_length)+2,
-		max_len, 0);
+	memcpy(ofp_buffer+offsetof(struct ofp13_packet_in, match)+4,
+		oxm, oxm_length);
+	memcpy(ofp_buffer+offsetof(struct ofp13_packet_in, match)+ALIGN8(4+oxm_length)+2,
+		packet->data, max_len);
 	for(int i=0; i<MAX_CONTROLLERS; i++){
 		struct ofp_pcb *ofp = &(controllers[i].ofp);
 		if((*send_bits & (1<<i)) == 0 ){
@@ -1321,24 +1305,40 @@ void check_ofp13_packet_in(){
 			continue;
 		}
 		if(pin->valid_until - sys_get_ms() > 0x80000000U){
-			pbuf_free(pin->packet.data);
+			if(pin->packet.malloced){
+				free(pin->packet.data);
+				pin->packet.data = NULL;
+				pin->packet.malloced = false;
+			}
 			pin->send_bits = 0;
 			continue;
 		}
-		struct ofp13_packet_in msg = {};
-		msg.buffer_id = pin->buffer_id;
-		msg.reason = pin->reason;
-		msg.table_id = pin->table_id;
-		msg.cookie = pin->cookie;
-		send_ofp13_packet_in(&pin->packet, msg, ntohs(pin->max_len), &pin->send_bits);
-		if(pin->send_bits == 0){
-			pbuf_free(pin->packet.data);
+		struct ofp13_packet_in msg = {
+			.header = {
+				.version = 4,
+				.type = OFPT13_PACKET_IN,
+			},
+			.buffer_id = pin->buffer_id,
+			.total_len = pin->packet.length,
+			.table_id = pin->table_id,
+			.reason = pin->reason,
+			.cookie = pin->cookie,
+			.match = {
+				.type = OFPMT13_OXM,
+			}
+		};
+		
+		send_ofp13_packet_in(msg, &pin->packet, ntohs(pin->max_len), &pin->send_bits);
+		if(pin->send_bits == 0 && pin->packet.malloced){
+			free(pin->packet.data);
+			pin->packet.data = NULL;
+			pin->packet.malloced = false;
 		}
 	}
 }
 
 static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const void *oxm){
-	uint8_t *data = packet->data->payload;
+	uint8_t *data = packet->data;
 	const uint8_t *o = oxm;
 	switch(*(uint32_t*)oxm){
 		// OXM_OF_IN_PORT, OXM_OF_IN_PHY_PORT not valid by spec.
@@ -1371,21 +1371,17 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 		
 		case OXM_OF_ETH_TYPE:
 		{
-			uint16_t i = oob->eth_offset-2;
+			uint16_t i = oob->eth_type_offset;
 			data[i] = o[4];
 			data[i+1] = o[5];
-			create_oob(packet->data, oob);
 		}
 		break;
 		
 		case OXM_OF_VLAN_VID:
-		if((oob->vlan & htons(0x1000)) != 0){
+		if((oob->vlan[0] & 0x10) != 0){
 			data[14] = (data[14] & 0xF0) | o[4];
 			data[15] = o[5];
-			oob->vlan &= htons(0xf000);
-			oob->vlan |= (o[4]<<8) | o[5];
-		}else{
-			//
+			memcpy(oob->vlan, data+14, 2);
 		}
 		
 		// TODO: implement more
@@ -1394,82 +1390,100 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 	}
 }
 
-static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob *oob, void *action, int flow){
+/*
+ *	return false on fatal status
+ */
+static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob *oob, void *action, int flow){
 	struct ofp13_action_header *act = action;
 	switch(ntohs(act->type)){
 		case OFPAT13_OUTPUT:
 		{
 			struct ofp13_action_output *out = action;
-			uint32_t port = ntohl(out->port) - 1; // port starts from 1
-			if(port < OFPP13_MAX){
-				if(out->port != packet->in_port && port<4 && Zodiac_Config.of_port[port]==1){
+			uint32_t port_idx = ntohl(out->port) - 1; // port starts from 1
+			if(port_idx < OFPP13_MAX){
+				if(out->port != packet->in_port && port_idx<4 && Zodiac_Config.of_port[port_idx]==1){
 					if(disable_ofp_pipeline == false){
-						fx_port_counts[port].tx_packets++;
-						pbuf_copy_partial(packet->data, ofp_buffer, packet->data->tot_len, 0);
-						gmac_write(ofp_buffer, packet->data->tot_len, 1<<port);
+						fx_port_counts[port_idx].tx_packets++;
+						gmac_write(packet->data, packet->length, 1<<port_idx);
 					}
 				}
 			}else if(out->port == htonl(OFPP13_ALL) || out->port == htonl(OFPP13_FLOOD) || out->port == htonl(OFPP13_NORMAL)){
 				if(disable_ofp_pipeline == false){
 					uint8_t p = 0;
-					for(int i=0; i<MAX_PORTS; i++){
-						if(Zodiac_Config.of_port[i]==1 && i != port){
+					for(uint32_t i=0; i<MAX_PORTS; i++){
+						if(Zodiac_Config.of_port[i]==1 && i != port_idx){
 							p |= 1<<i;
 							fx_port_counts[i].tx_packets++;
 						}
 					}
 					if(p != 0){
-						pbuf_copy_partial(packet->data, ofp_buffer, packet->data->tot_len, 0);
-						gmac_write(ofp_buffer, packet->data->tot_len, p);
+						gmac_write(packet->data, packet->length, p);
 					}
 				}
 			}else if(out->port == htonl(OFPP13_CONTROLLER)){
-				struct ofp13_packet_in msg = {};
 				uint8_t send_bits = 0;
-				msg.buffer_id = htonl(OFP13_NO_BUFFER);
+				uint32_t buffer_id = htonl(OFP13_NO_BUFFER);
 				if(out->max_len != htons(OFPCML13_NO_BUFFER)){
 					send_bits |= 0x80;
-					msg.buffer_id = htonl(fx_buffer_id++);
+					buffer_id = htonl(fx_buffer_id++);
 				}
-				msg.reason = OFPR13_ACTION;
-				if(flow < 0){
-					msg.table_id = 0;
-					memset(&msg.cookie, 0xff, 8); // openvswitch does this
-				} else {
-					msg.table_id = fx_flows[flow].table_id;
-					msg.cookie = fx_flows[flow].cookie;
+				
+				uint8_t reason = OFPR13_ACTION;
+				uint8_t table_id = 0;
+				uint64_t cookie = 0xffffffffffffffffULL;
+				if(flow >= 0){
 					if(fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
 						// table-miss
-						msg.reason = OFPR13_NO_MATCH;
+						reason = OFPR13_NO_MATCH;
 					}
+					table_id = fx_flows[flow].table_id;
+					cookie = fx_flows[flow].cookie;
 				}
+				
+				struct ofp13_packet_in msg = {
+					.header = {
+						.version = 4,
+						.type = OFPT13_PACKET_IN,
+					},
+					.buffer_id = buffer_id,
+					.total_len = packet->length,
+					.table_id = table_id,
+					.reason = reason,
+					.cookie = cookie,
+					.match = {
+						.type = OFPMT13_OXM,
+					}
+				};
 				
 				for(int i=0; i<MAX_CONTROLLERS; i++){
 					if(controllers[i].ofp.negotiated){
 						send_bits |= 1<<i;
 					}
 				}
-				send_ofp13_packet_in(packet, msg, ntohs(out->max_len), &send_bits);
+				send_ofp13_packet_in(msg, packet, ntohs(out->max_len), &send_bits);
 				if(send_bits != 0){
 					for(int i=0; i<MAX_BUFFERS; i++){
 						struct fx_packet_in *pin = fx_packet_ins+i;
 						if(pin->send_bits == 0){
-							struct pbuf *data = pbuf_alloc(PBUF_RAW, packet->data->tot_len, PBUF_RAM);
+							void *data = malloc(packet->length);
 							if(data != NULL){
-								pin->send_bits = send_bits;
-								pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
+								memcpy(data, packet->data, packet->length);
 								
 								pin->buffer_id = msg.buffer_id;
 								pin->reason = msg.reason;
 								pin->table_id = msg.table_id;
 								pin->cookie = msg.cookie;
+								pin->send_bits = send_bits;
+								pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
 								
-								pin->packet.in_port = packet->in_port;
-								pin->packet.in_phy_port = packet->in_phy_port;
-								pin->packet.metadata = packet->metadata;
-								pin->packet.tunnel_id = packet->tunnel_id;
-								pbuf_copy(data, packet->data);
-								pin->packet.data = data;
+								struct fx_packet pkt = {
+									.data = data,
+									.capacity = packet->length,
+									.length = packet->length,
+									.malloced = true,
+								};
+								pin->packet = pkt;
+								
 								pin->max_len = ntohs(out->max_len);
 							}
 							break;
@@ -1480,112 +1494,134 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 		}
 		break;
 		
-		case OFPAT13_COPY_TTL_OUT:
-		if(oob->eth_type==htons(0x8848) || oob->eth_type==htons(0x8848)){
-			// MPLS header structure
-			// check bottom
-		}
-		break;
-		
 		case OFPAT13_PUSH_VLAN:
 		{
 			struct ofp13_action_push *ap = action;
-			uint16_t vlan = oob->vlan & htons(0xEFFF); // clear CFI
-			// pbuf can't grow as of lwip 1.4
-			uint16_t len = packet->data->tot_len;
-			pbuf_copy_partial(packet->data, ofp_buffer, 12, 0);
-			*(uint16_t*)((uintptr_t)ofp_buffer + 12) = ap->ethertype;
-			*(uint16_t*)((uintptr_t)ofp_buffer + 14) = vlan;
-			pbuf_copy_partial(packet->data, ofp_buffer+16, len - 12, 12);
-			len += 4;
-			
-			pbuf_free(packet->data);
-			struct pbuf *data = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
-			if(data != NULL || ERR_OK == pbuf_take(data, ofp_buffer, len)){
-				packet->data = data;
-				create_oob(packet->data, oob);
-			}else{
-				// should not happen. because one pbuf was already freed
+			uint8_t *data = packet->data;
+			uint16_t length = packet->length + 4;
+			if(length > packet->capacity){
+				if(packet->malloced){
+					data = realloc(packet->data, length);
+				}else{
+					data = malloc(length);
+				}
+				if(data == NULL){
+					return false;
+				}
+				packet->malloced = true;
+				packet->capacity = length;
 			}
+			memmove(data, packet->data, 12);
+			memmove(data+16, packet->data+12, packet->length-12);
+			memcpy(data+12, &ap->ethertype, 2);
+			data[14] = oob->vlan[0] & 0xEF; // clear CFI
+			data[15] = oob->vlan[1];
+			
+			packet->data = data;
+			packet->length = length;
+			sync_oob(packet, oob);
 		}
 		break;
 		
 		case OFPAT13_POP_VLAN:
-		if((oob->vlan & htons(0x1000)) != 0){
-			uint16_t len = packet->data->tot_len;
-			pbuf_copy_partial(packet->data, ofp_buffer, 12, 0);
-			pbuf_copy_partial(packet->data, ofp_buffer+12, len - 16, 16);
-			len -= 4;
-			pbuf_realloc(packet->data, len);
-			pbuf_take(packet->data, ofp_buffer, len);
-			create_oob(packet->data, oob);
+		if((oob->vlan[0] & 0x10) != 0){ // CFI bit indicates VLAN_PRESENT
+			uint8_t *data = packet->data;
+			memmove(data+12, data+16, packet->length-16);
+			packet->length -= 4;
+			sync_oob(packet, oob);
 		}
 		break;
 		
 		case OFPAT13_SET_NW_TTL:
-		if(oob->eth_type == htons(0x0806)){
+		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
 			struct ofp13_action_nw_ttl *an = action;
-			struct ip_hdr *hdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
+			struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 			IPH_TTL_SET(hdr, an->nw_ttl);
 		} // TODO: IPv6, MPLS
 		break;
 		
 		case OFPAT13_DEC_NW_TTL:
-		if(oob->eth_type == htons(0x0806)){
-			struct ip_hdr *hdr = (void*)((uintptr_t)packet->data->payload + oob->eth_offset);
-			uint8_t ttl = IPH_TTL(hdr);
-			if(ttl == 1){
-				struct ofp13_packet_in msg = {};
+		{
+			bool notify = false;
+			if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
+				struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+				uint8_t ttl = IPH_TTL(hdr);
+				if(ttl == 1){
+					notify = true;
+				} else {
+					IPH_TTL_SET(hdr, ttl-1);
+				}
+			} // TODO: IPv6, MPLS
+
+			if(notify){
 				uint8_t send_bits = 0;
-				msg.buffer_id = htonl(OFP13_NO_BUFFER);
+				uint64_t buffer_id = htonl(OFP13_NO_BUFFER);
 				if(fx_switch.miss_send_len != OFPCML13_NO_BUFFER){
 					send_bits |= 0x80;
-					msg.buffer_id = htonl(fx_buffer_id++);
+					buffer_id = htonl(fx_buffer_id++);
 				}
-				msg.reason = OFPR13_INVALID_TTL;
-				if(flow < 0){
-					msg.table_id = 0;
-					memset(&msg.cookie, 0xff, 8); // openvswitch does this
-				} else {
-					msg.table_id = fx_flows[flow].table_id;
-					msg.cookie = fx_flows[flow].cookie;
+		
+				uint8_t table_id = 0;
+				uint8_t reason = OFPR13_INVALID_TTL;
+				uint64_t cookie = 0xffffffffffffffffULL; // openvswitch does this
+				if(flow >= 0){
+					table_id = fx_flows[flow].table_id;
+					cookie = fx_flows[flow].cookie;
 				}
-				
+
+				struct ofp13_packet_in msg = {
+					.header = {
+						.version = 4,
+						.type = OFPT13_PACKET_IN,
+					},
+					.buffer_id = buffer_id,
+					.total_len = packet->length,
+					.table_id = table_id,
+					.reason = reason,
+					.cookie = cookie,
+					.match = {
+						.type = OFPMT13_OXM,
+					}
+				};
+		
 				for(int i=0; i<MAX_CONTROLLERS; i++){
 					if(controllers[i].ofp.negotiated){
 						send_bits |= 1<<i;
 					}
 				}
-				send_ofp13_packet_in(packet, msg, fx_switch.miss_send_len, &send_bits);
+				send_ofp13_packet_in(msg, packet, fx_switch.miss_send_len, &send_bits);
 				if(send_bits != 0){
 					for(int i=0; i<MAX_BUFFERS; i++){
 						struct fx_packet_in *pin = fx_packet_ins+i;
 						if(pin->send_bits == 0){
-							struct pbuf *data = pbuf_alloc(PBUF_RAW, packet->data->tot_len, PBUF_RAM);
+							uint8_t *data = malloc(packet->length);
 							if(data != NULL){
 								pin->send_bits = send_bits;
 								pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
-							
-								pin->buffer_id = msg.buffer_id;
-								pin->reason = msg.reason;
-								pin->table_id = msg.table_id;
-								pin->cookie = msg.cookie;
-							
-								pbuf_copy(data, packet->data);
-								pin->packet = *packet;
-								pin->packet.data = data;
+						
+								pin->buffer_id = buffer_id;
+								pin->reason = reason;
+								pin->table_id = table_id;
+								pin->cookie = cookie;
+						
+								struct fx_packet pkt = {
+									.data = data,
+									.length = packet->length,
+									.capacity = packet->length,
+									.malloced = true,
+								};
+								pin->packet = pkt;
+						
 								pin->max_len = fx_switch.miss_send_len;
-							} else {
+								} else {
 								// out of memory. silent drop.
 							}
 							break;
 						}
 					}
 				}
-			} else {
-				IPH_TTL_SET(hdr, ttl-1);
 			}
-		} // TODO: IPv6, MPLS
+		}
 		break;
 		
 		case OFPAT13_SET_FIELD:
@@ -1594,8 +1630,8 @@ static void execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 			set_field(packet, oob, as->field);
 		}
 		break;
-		
 	}
+	return true;
 }
 
 // 	OFPAT13_SET_FIELD has different rule
@@ -1618,7 +1654,7 @@ static const uint16_t actset_index[] = {
 };
 
 void execute_ofp13_flow(struct fx_packet *packet, struct fx_packet_oob *oob, int flow){
-	void* insts[8] = {};
+	void* insts[8] = {0};
 	uintptr_t pos = (uintptr_t)fx_flows[flow].ops;
 	while(pos < (uintptr_t)fx_flows[flow].ops + fx_flows[flow].ops_length){
 		struct ofp13_instruction *hdr = (void*)pos;
@@ -1637,7 +1673,9 @@ void execute_ofp13_flow(struct fx_packet *packet, struct fx_packet_oob *oob, int
 		uintptr_t p = (uintptr_t)ia->actions;
 		while(p < (uintptr_t)insts[OFPIT13_APPLY_ACTIONS] + ntohs(ia->len)){
 			struct ofp13_action_header *act = (void*)p;
-			execute_ofp13_action(packet, oob, (void*)p, flow);
+			if(execute_ofp13_action(packet, oob, (void*)p, flow) == false){
+				return;
+			}
 			p += ntohs(act->len);
 		}
 	}
@@ -1656,7 +1694,7 @@ void execute_ofp13_flow(struct fx_packet *packet, struct fx_packet_oob *oob, int
 			struct ofp13_action_header *act = (void*)p;
 			if(ntohs(act->type) == OFPAT13_SET_FIELD){
 				struct ofp13_action_set_field *setf = (void*)p;
-				// scan oob->action_set
+				// TODO: scan oob->action_set
 			}else{
 				for(uintptr_t i=0; i<sizeof(actset_index)/sizeof(uint16_t); i++){
 					if(actset_index[i] == ntohs(act->type)){
@@ -1678,18 +1716,17 @@ void execute_ofp13_flow(struct fx_packet *packet, struct fx_packet_oob *oob, int
 		if(table < MAX_TABLES){
 			flow = lookup_fx_table(packet, oob, table);
 			fx_table_counts[table].lookup++;
-			if(flow < 0){
-				return;
+			if(flow >= 0){
+				if(fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
+					// table-miss
+				}else{
+					fx_table_counts[table].matched++;
+				}
+				fx_flow_counts[flow].packet_count++;
+				fx_flow_counts[flow].byte_count += packet->length;
+				fx_flow_timeouts[flow].update = sys_get_ms();
+				execute_ofp13_flow(packet, oob, flow);
 			}
-			if(fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
-				// table-miss
-			}else{
-				fx_table_counts[table].matched++;
-			}
-			fx_flow_counts[flow].packet_count++;
-			fx_flow_counts[flow].byte_count+=packet->data->tot_len;
-			fx_flow_timeouts[flow].update = sys_get_ms();
-			execute_ofp13_flow(packet, oob, flow);
 		}
 		return;
 	}
@@ -1698,7 +1735,9 @@ void execute_ofp13_flow(struct fx_packet *packet, struct fx_packet_oob *oob, int
 		if(oob->action_set[i] == NULL){
 			continue;
 		}
-		execute_ofp13_action(packet, oob, oob->action_set[i], flow);
+		if(execute_ofp13_action(packet, oob, oob->action_set[i], flow) == false){
+			return;
+		}
 	}
 }
 
@@ -1805,10 +1844,12 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 					if(fx_packet_ins[i].buffer_id != hint.buffer_id){
 						continue;
 					}
-					packet.data = fx_packet_ins[i].packet.data, // ownership moves
-					fx_packet_ins[i].send_bits = 0;
-					found = true;
+					packet.data = fx_packet_ins[i].packet.data; // ownership moves
+					packet.length = fx_packet_ins[i].packet.length;
+					packet.capacity = fx_packet_ins[i].packet.capacity;
+					packet.malloced = fx_packet_ins[i].packet.malloced;
 					memset(fx_packet_ins+i, 0, sizeof(struct fx_packet_in));
+					found = true;
 					break;
 				}
 				if(found == false){
@@ -1816,16 +1857,13 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 					return ofp_write_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BUFFER_UNKNOWN);
 				}
 				
-				uint16_t len = offsetof(struct ofp13_packet_out, actions);
-				len += ntohs(hint.actions_len);
-				
 				uint16_t offset = offsetof(struct ofp13_packet_out, actions);
 				pbuf_copy_partial(self->rbuf, actions, ntohs(hint.actions_len), self->rskip+offset);
 			}else{
 				uint16_t len = offsetof(struct ofp13_packet_out, actions);
 				len += ntohs(hint.actions_len);
 				
-				struct pbuf *data = pbuf_alloc(PBUF_RAW, length-len, PBUF_RAM);
+				void *data = malloc(length-len);
 				if(data == NULL){ // out-of memory
 					free(actions);
 					return ofp_write_error(self, OFPET13_BAD_REQUEST, OFPBRC13_EPERM);
@@ -1833,12 +1871,14 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 				
 				uint16_t offset = offsetof(struct ofp13_packet_out, actions);
 				pbuf_copy_partial(self->rbuf, actions, ntohs(hint.actions_len), self->rskip+offset);
-				pbuf_copy_partial(self->rbuf, ofp_buffer, length-len, self->rskip+len);
-				pbuf_take(data, ofp_buffer, length-len);
+				pbuf_copy_partial(self->rbuf, data, length-len, self->rskip+len);
 				packet.data = data;
+				packet.length = length - len;
+				packet.capacity = length - len;
+				packet.malloced = true;
 			}
 			struct fx_packet_oob oob;
-			create_oob(packet.data, &oob);
+			sync_oob(&packet, &oob);
 			
 			uintptr_t p = (uintptr_t)actions;
 			uintptr_t endp = (uintptr_t)actions + ntohs(hint.actions_len);
@@ -1846,7 +1886,9 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 				struct ofp13_action_header *act = (void*)p;
 				if(p + ntohs(act->len) > endp){
 					free(actions);
-					pbuf_free(packet.data); // free that obtained pbuf
+					if(packet.malloced){
+						free(packet.data);
+					}
 					return ofp_write_error(self, OFPET13_BAD_ACTION, OFPBAC13_BAD_LEN);
 				}
 				// xxx: check more
@@ -1855,11 +1897,15 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 			p = (uintptr_t)actions;
 			while(p < endp){
 				struct ofp13_action_header *act = (void*)p;
-				execute_ofp13_action(&packet, &oob, act, -1);
+				if(execute_ofp13_action(&packet, &oob, act, -1)==false){
+					break;
+				}
 				p += ntohs(act->len);
 			}
 			free(actions);
-			pbuf_free(packet.data); // free that obtained pbuf
+			if(packet.malloced){
+				free(packet.data);
+			}
 			ret = OFP_OK;
 		}
 		break;

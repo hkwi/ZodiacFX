@@ -704,50 +704,50 @@ void openflow_task(){
 	watch_fx_flows();
 }
 
-void create_oob(struct pbuf *frame, struct fx_packet_oob *oob){
-	uint8_t offset = 14;
-	uint16_t vlan = 0;
-	uint16_t eth_type;
-	pbuf_copy_partial(frame, &eth_type, 2, 12);
-	if(eth_type == htons(0x8100) || eth_type == htons(0x88a8)){
-		pbuf_copy_partial(frame, &vlan, 2, 14);
-		pbuf_copy_partial(frame, &eth_type, 2, 16);
-		vlan = (vlan & htons(0xEFFF)) | htons(0x1000); // set CFI bit for internal use
-		offset = 18;
-	}
-	while(eth_type == htons(0x8100) || eth_type == htons(0x88a8)){
-		pbuf_copy_partial(frame, &eth_type, 2, offset+2);
+/*
+ *	update oob cache information
+ */
+void sync_oob(struct fx_packet *packet, struct fx_packet_oob *oob){
+	const uint8_t *data = packet->data;
+	uint8_t offset = 12;
+	memset(oob->vlan, 0, 2);
+	
+	if(memcmp(data+offset, ETH_TYPE_VLAN, 2)==0 || memcmp(data+offset, ETH_TYPE_VLAN2, 2)==0){
+		// save outer-most information
+		memcpy(oob->vlan, data+14, 2);
+		oob->vlan[0] |= 0x10; // CFI bit for VLAN_PRESENT
 		offset += 4;
 	}
-	memset(oob->action_set, 0, sizeof(const char*) * 16);
-	oob->action_set_oxm = NULL;
-	oob->action_set_oxm_length = 0;
-	oob->eth_offset = offset;
-	oob->eth_type = eth_type;
-	oob->vlan = vlan;
+	while(offset + 4 <= packet->length){
+		if(memcmp(data+offset, ETH_TYPE_VLAN, 2)==0 || memcmp(data+offset, ETH_TYPE_VLAN2, 2)==0){
+			offset += 4;
+		}else{
+			break;
+		}
+	}
+	oob->eth_type_offset = offset;
 }
 
-void openflow_pipeline(struct pbuf *frame, uint32_t in_port){
-	if(frame->tot_len == 0){
-		return;
-	}
-	struct fx_packet packet = {
-		.data = frame,
-		.in_port = htonl(in_port),
+void openflow_pipeline(struct fx_packet *packet){
+	// we don't have to check the minimum length here,
+	// because frame length is 60 or longer by ethernet spec.
+	struct fx_packet_oob oob = {
+		.action_set = {0},
+		.action_set_oxm = NULL,
+		.action_set_oxm_length = 0,
 	};
-	struct fx_packet_oob oob;
-	create_oob(frame, &oob);
+	sync_oob(packet, &oob);
 	
 	// trim ethernet padding - may make this configurable
-	if(frame->tot_len == 60){
-		if(oob.eth_type == htons(0x0800)){
-			struct ip_hdr *iphdr = (void*)((uintptr_t)frame->payload + oob.eth_offset);
-			uint16_t trim = oob.eth_offset + ntohs(IPH_LEN(iphdr));
-			pbuf_realloc(frame, trim);
+	if(packet->length == 60){
+		const uint8_t *eth_type = packet->data + oob.eth_type_offset;
+		if(memcmp(eth_type, ETH_TYPE_IPV4, 2)==0){
+			struct ip_hdr *iphdr = (void*)(eth_type + 2);
+			packet->length = oob.eth_type_offset + 2 + ntohs(IPH_LEN(iphdr));
 		}
 	}
 	
-	int flow = lookup_fx_table(&packet, &oob, 0);
+	int flow = lookup_fx_table(packet, &oob, 0);
 	fx_table_counts[0].lookup++;
 	if(flow < 0){
 		if(OF_Version==1){
@@ -761,11 +761,11 @@ void openflow_pipeline(struct pbuf *frame, uint32_t in_port){
 		fx_table_counts[0].matched++;
 	}
 	fx_flow_counts[flow].packet_count++;
-	fx_flow_counts[flow].byte_count+=frame->tot_len;
+	fx_flow_counts[flow].byte_count += packet->length;
 	fx_flow_timeouts[flow].update = sys_get_ms();
 	if(OF_Version == 4){
-		execute_ofp13_flow(&packet, &oob, flow);
+		execute_ofp13_flow(packet, &oob, flow);
 	} else if(OF_Version == 1){
-		execute_ofp10_flow(&packet, &oob, flow);
+		execute_ofp10_flow(packet, &oob, flow);
 	}
 }
