@@ -719,9 +719,13 @@ void switch_task(struct netif *netif){
 					.capacity = GMAC_FRAME_LENTGH_MAX,
 					.data = rx_buffer,
 					.in_port = htonl(tag+1),
+					.malloced = false,
 				};
 				fx_port_counts[tag].rx_packets++;
 				openflow_pipeline(&frame);
+				if(frame.malloced){
+					free(frame.data);
+				}
 			}
 		} else{
 			// PBUF_ROM or PBUF_REF fails with ICMP handling: not yet implemented in LWIP.

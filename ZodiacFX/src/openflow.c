@@ -193,6 +193,7 @@ uint16_t ofp_tx_write(struct ofp_pcb *pcb, const void *data, uint16_t length){
 	if(ofp_tx_room(pcb) >= length){
 		if(ERR_OK == tcp_write(pcb->tcp, data, length, TCP_WRITE_FLAG_COPY)){
 			pcb->txlen += length;
+			tcp_output(pcb->tcp);
 			return length;
 		}
 	}
@@ -691,7 +692,6 @@ void openflow_task(){
 			continue;
 		}
 		c->ofp.alive_until = sys_get_ms() + CONNECT_RETRY_INTERVAL;
-		tcp_nagle_disable(tcp);
 		tcp_arg(tcp, &(c->ofp));
 		tcp_err(tcp, ofp_err_cb);
 		tcp_recv(tcp, ofp_recv_cb);

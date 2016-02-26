@@ -1324,7 +1324,7 @@ void check_ofp13_packet_in(){
 			.reason = pin->reason,
 			.cookie = pin->cookie,
 			.match = {
-				.type = OFPMT13_OXM,
+				.type = htons(OFPMT13_OXM),
 			}
 		};
 		
@@ -1399,19 +1399,20 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 		case OFPAT13_OUTPUT:
 		{
 			struct ofp13_action_output *out = action;
-			uint32_t port_idx = ntohl(out->port) - 1; // port starts from 1
-			if(port_idx < OFPP13_MAX){
-				if(out->port != packet->in_port && port_idx<4 && Zodiac_Config.of_port[port_idx]==1){
+			uint32_t in_port_idx = ntohl(packet->in_port)-1;
+			uint32_t out_port_idx = ntohl(out->port) - 1; // port starts from 1
+			if(out_port_idx < OFPP13_MAX){
+				if(out->port != packet->in_port && out_port_idx<4 && Zodiac_Config.of_port[out_port_idx]==1){
 					if(disable_ofp_pipeline == false){
-						fx_port_counts[port_idx].tx_packets++;
-						gmac_write(packet->data, packet->length, 1<<port_idx);
+						fx_port_counts[out_port_idx].tx_packets++;
+						gmac_write(packet->data, packet->length, 1<<out_port_idx);
 					}
 				}
 			}else if(out->port == htonl(OFPP13_ALL) || out->port == htonl(OFPP13_FLOOD) || out->port == htonl(OFPP13_NORMAL)){
 				if(disable_ofp_pipeline == false){
 					uint8_t p = 0;
 					for(uint32_t i=0; i<MAX_PORTS; i++){
-						if(Zodiac_Config.of_port[i]==1 && i != port_idx){
+						if(Zodiac_Config.of_port[i]==1 && i != in_port_idx){
 							p |= 1<<i;
 							fx_port_counts[i].tx_packets++;
 						}
@@ -1446,12 +1447,12 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 						.type = OFPT13_PACKET_IN,
 					},
 					.buffer_id = buffer_id,
-					.total_len = packet->length,
+					.total_len = htons(packet->length),
 					.table_id = table_id,
 					.reason = reason,
 					.cookie = cookie,
 					.match = {
-						.type = OFPMT13_OXM,
+						.type = htons(OFPMT13_OXM),
 					}
 				};
 				
@@ -1481,6 +1482,10 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 									.capacity = packet->length,
 									.length = packet->length,
 									.malloced = true,
+									.in_port = packet->in_port,
+									.metadata = packet->metadata,
+									.tunnel_id = packet->tunnel_id,
+									.in_phy_port = packet->in_phy_port,
 								};
 								pin->packet = pkt;
 								
@@ -1575,7 +1580,7 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 						.type = OFPT13_PACKET_IN,
 					},
 					.buffer_id = buffer_id,
-					.total_len = packet->length,
+					.total_len = htons(packet->length),
 					.table_id = table_id,
 					.reason = reason,
 					.cookie = cookie,
@@ -1609,6 +1614,10 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 									.length = packet->length,
 									.capacity = packet->length,
 									.malloced = true,
+									.in_port = packet->in_port,
+									.metadata = packet->metadata,
+									.tunnel_id = packet->tunnel_id,
+									.in_phy_port = packet->in_phy_port,
 								};
 								pin->packet = pkt;
 						
@@ -1779,7 +1788,8 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 			char dpid[8] = {0};
 			memcpy(dpid+2, Zodiac_Config.MAC_address, 6);
 			memcpy(&res.datapath_id, dpid, 8);
-			ret = ofp_tx_write(self, &res, 32);
+			ofp_tx_write(self, &res, 32);
+			ret = OFP_OK;
 		}
 		break;
 
@@ -1799,7 +1809,8 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 				.flags = htons(fx_switch.flags),
 				.miss_send_len = htons(fx_switch.miss_send_len),
 			};
-			ret = ofp_tx_write(self, &res, 12);
+			ofp_tx_write(self, &res, 12);
+			ret = OFP_OK;
 		}
 		break;
 
@@ -1957,11 +1968,7 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 		break;
 	}
 	if(ret == OFP_OK){
-		if(ofp_rx_length(self) >= length){
-			self->rskip = head + length;
-		} else {
-			// error may be handled
-		}
+		self->rskip = head + length;
 	} else if (ret == OFP_NOOP){
 		self->rskip = head;
 	}
