@@ -68,8 +68,6 @@ static uint32_t gs_ul_spi_clock = 500000;
 /* Delay between consecutive transfers. */
 #define SPI_DLYBCT 0x10
 
-uint8_t stats_rr = 0;
-
 void spi_master_initialize(void);
 void spi_slave_initialize(void);
 
@@ -635,6 +633,18 @@ void sync_switch_port_counts(uint8_t port_index){
 	fx_port_counts[port_index].collisions += ntohl(*(uint32_t*)(uintptr_t)rxreg) & 0x1fffffff;
 }
 
+void switch_reset(){
+	switch_write(2, 0x4c); // switch moves to soft reset status
+	
+	// reset port0-4
+	switch_write(31, 0x11);
+	switch_write(47, 0x11);
+	switch_write(63, 0x11);
+	switch_write(79, 0x11);
+	
+	switch_write(2, 0x3c); // switch back from soft reset with RSTP flush
+}
+
 void switch_init(){
 	/* Wait for PHY to be ready (CAT811: Max400ms) */
 	volatile uint32_t ul_delay = sysclk_get_cpu_hz() / 1000 / 3 * 400;
@@ -642,9 +652,7 @@ void switch_init(){
 	
 	/* Enable GMAC clock */
 	pmc_enable_periph_clk(ID_GMAC);
-
 	/* Fill in GMAC options */
-	NVIC_DisableIRQ(GMAC_IRQn); // we'll setup gmac handler object
 	gmac_options_t gmac_option = {
 		.uc_copy_all_frame = 1,
 		.uc_no_boardcast = 0,
@@ -659,14 +667,13 @@ void switch_init(){
 	};
 	/* Init GMAC driver structure */
 	gmac_dev_init(GMAC, &gs_gmac_dev, &gmac_option);
-	// soft reset
-	switch_write(2, 0x76);
-	switch_write(31, 0x11);
-	switch_write(47, 0x11);
-	switch_write(63, 0x11);
-	switch_write(79, 0x11);
-	/* Init KSZ8795 registers */
-	switch_write(86,232);	// Set CPU interface to MII
+	/* Set RX buffer size to 1536. */
+	gmac_set_rx_bufsize(GMAC, 0x18);
+	/* Enable NVIC GMAC Interrupt */
+	NVIC_EnableIRQ(GMAC_IRQn);
+
+	/* Init KSZ8795 global registers */
+	switch_write(86, 0xE8);	// Set CPU interface to MII
 	switch_write(12, 0x46);	// Turn on tail tag mode
 	// CPU(port5) controls the traffic
 	switch_write(21, 0x03);
@@ -685,21 +692,20 @@ void switch_init(){
 	switch_write(50, 0x07);
 	switch_write(66, 0x07);
 	switch_write(82, 0x07);
-	// flush
-	switch_write(2, 0x36);
-	
-	/* Enable Interrupt */
-	NVIC_EnableIRQ(GMAC_IRQn);
-	
+	// port5 CPU side setup
 	/* Init MAC PHY driver */
 	if(GMAC_OK != ethernet_phy_init(GMAC, BOARD_GMAC_PHY_ADDR, sysclk_get_cpu_hz())){
-		// unreach
-		return;
+		switch_unreach();
 	}
+	/* Auto Negotiate */
+	if(GMAC_OK != ethernet_phy_auto_negotiate(GMAC, BOARD_GMAC_PHY_ADDR)) {
+		switch_unreach();
+	}
+	/* Establish ethernet link */
 	if(GMAC_OK != ethernet_phy_set_link(GMAC, BOARD_GMAC_PHY_ADDR, 1)){
-		// unreach
-		return;
+		switch_unreach();
 	}
+	switch_reset();
 }
 
 void switch_task(struct netif *netif){
@@ -712,7 +718,7 @@ void switch_task(struct netif *netif){
 		// switch is configured to work in tail tag mode
 		rx_buffer_length--;
 		uint8_t tag = rx_buffer[rx_buffer_length];
-		if(tag<4 && Zodiac_Config.of_port[tag]==1){ // XXX: port number hardcoded here
+		if(tag<MAX_PORTS && Zodiac_Config.of_port[tag]==1){
 			if(disable_ofp_pipeline == false){
 				struct fx_packet frame = {
 					.length = rx_buffer_length,
