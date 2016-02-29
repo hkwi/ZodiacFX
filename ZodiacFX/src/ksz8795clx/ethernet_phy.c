@@ -103,35 +103,10 @@ static err_t gmac_low_level_output(struct netif*, struct pbuf*);
 static uint8_t ethernet_phy_find_valid(Gmac *p_gmac, uint8_t uc_phy_addr,
 		uint8_t uc_start_addr)
 {
-	uint32_t ul_value = 0;
-	uint8_t uc_rc = 0;
-	uint8_t uc_cnt;
-	uint8_t uc_phy_address = uc_phy_addr;
-
-	gmac_enable_management(p_gmac, true);
-
-	/* Check the current PHY address */
-	gmac_phy_read(p_gmac, uc_phy_addr, GMII_PHYID1, &ul_value);
-
-	/* Find another one */
-	if (ul_value != GMII_OUI_LSB) {
-		uc_rc = 0xFF;
-		for (uc_cnt = uc_start_addr; uc_cnt <= ETH_PHY_MAX_ADDR; uc_cnt++) {
-			uc_phy_address = (uc_phy_address + 1) & 0x1F;
-			gmac_phy_read(p_gmac, uc_phy_address, GMII_PHYID1, &ul_value);
-			if (ul_value == GMII_OUI_MSB) {
-				uc_rc = uc_phy_address;
-				break;
-			}
-		}
-	}
-
-	gmac_enable_management(p_gmac, false);
-
-	if (uc_rc != 0xFF) {
-		gmac_phy_read(p_gmac, uc_phy_address, GMII_BMSR, &ul_value);
-	}
-	return uc_rc;
+	UNUSED(p_gmac);
+	UNUSED(uc_phy_addr);
+	UNUSED(uc_start_addr);
+	return GMAC_OK;
 }
 
 
@@ -156,13 +131,14 @@ uint8_t ethernet_phy_init(Gmac *p_gmac, uint8_t uc_phy_addr, uint32_t mck)
 	uint8_t uc_rc;
 	uint8_t uc_phy;
 
-	ethernet_phy_reset(GMAC, uc_phy_addr);
+	ethernet_phy_reset(GMAC,uc_phy_addr);
 
 	/* Configure GMAC runtime clock */
 	uc_rc = gmac_set_mdc_clock(p_gmac, mck);
 	if (uc_rc != GMAC_OK) {
 		return 0;
 	}
+
 	/* Check PHY Address */
 	uc_phy = ethernet_phy_find_valid(p_gmac, uc_phy_addr, 0);
 	if (uc_phy == 0xFF) {
@@ -189,76 +165,27 @@ uint8_t ethernet_phy_init(Gmac *p_gmac, uint8_t uc_phy_addr, uint32_t mck)
 uint8_t ethernet_phy_set_link(Gmac *p_gmac, uint8_t uc_phy_addr,
 		uint8_t uc_apply_setting_flag)
 {
-	uint32_t ul_stat1;
-	uint32_t ul_stat2;
-	uint8_t uc_phy_address, uc_speed, uc_fd;
-	uint8_t uc_rc;
+	UNUSED(p_gmac);
+	UNUSED(uc_phy_addr);
+	UNUSED(uc_apply_setting_flag);
 
-	gmac_enable_management(p_gmac, true);
+	switch_write(1,144);
+	gmac_enable_transmit(GMAC, false);
+	gmac_enable_receive(GMAC, false);
+	
+	switch_write(86,232);
+	
+	gmac_set_speed(p_gmac, true);
+	gmac_enable_full_duplex(p_gmac, true);
+	gmac_enable_copy_all(p_gmac, true);
+	gmac_disable_broadcast(p_gmac, false);
 
-	uc_phy_address = uc_phy_addr;
-
-	uc_rc = gmac_phy_read(p_gmac, uc_phy_address, GMII_BMSR, &ul_stat1);
-	if (uc_rc != GMAC_OK) {
-		/* Disable PHY management and start the GMAC transfer */
-		gmac_enable_management(p_gmac, false);
-
-		return uc_rc;
-	}
-
-	if ((ul_stat1 & GMII_LINK_STATUS) == 0) {
-		/* Disable PHY management and start the GMAC transfer */
-		gmac_enable_management(p_gmac, false);
-
-		return GMAC_INVALID;
-	}
-
-	if (uc_apply_setting_flag == 0) {
-		/* Disable PHY management and start the GMAC transfer */
-		gmac_enable_management(p_gmac, false);
-
-		return uc_rc;
-	}
-
-	/* Read advertisement */
-	uc_rc = gmac_phy_read(p_gmac, uc_phy_address, GMII_PCR1, &ul_stat2);
-	if (uc_rc != GMAC_OK) {
-		/* Disable PHY management and start the GMAC transfer */
-		gmac_enable_management(p_gmac, false);
-
-		return uc_rc;
-	}
-
-	if ((ul_stat1 & GMII_100BASE_TX_FD) && (ul_stat2 & GMII_OMI_100BASE_TX_FD)) {
-		/* Set GMAC for 100BaseTX and Full Duplex */
-		uc_speed = true;
-		uc_fd = true;
-	}
-
-	if ((ul_stat1 & GMII_10BASE_T_FD) && (ul_stat2 & GMII_OMI_10BASE_T_FD)) {
-		/* Set MII for 10BaseT and Full Duplex */
-		uc_speed = false;
-		uc_fd = true;
-	}
-
-	if ((ul_stat1 & GMII_100BASE_TX_HD) && (ul_stat2 & GMII_OMI_100BASE_TX_HD)) {
-		/* Set MII for 100BaseTX and Half Duplex */
-		uc_speed = true;
-		uc_fd = false;
-	}
-
-	if ((ul_stat1 & GMII_10BASE_T_HD) && (ul_stat2 & GMII_OMI_10BASE_T_HD)) {
-		/* Set MII for 10BaseT and Half Duplex */
-		uc_speed = false;
-		uc_fd = false;
-	}
-
-	gmac_set_speed(p_gmac, uc_speed);
-	gmac_enable_full_duplex(p_gmac, uc_fd);
-
-	/* Start the GMAC transfers */
-	gmac_enable_management(p_gmac, false);
-	return uc_rc;
+	/* Select Media Independent Interface type*/ 
+	gmac_select_mii_mode(p_gmac, ETH_PHY_MODE);
+	gmac_enable_transmit(GMAC, true);
+	gmac_enable_receive(GMAC, true);
+	switch_write(1,145);
+	ethernet_phy_reset(GMAC,uc_phy_addr);
 
 	return GMAC_OK;
 }
@@ -274,135 +201,8 @@ uint8_t ethernet_phy_set_link(Gmac *p_gmac, uint8_t uc_phy_addr,
  */
 uint8_t ethernet_phy_auto_negotiate(Gmac *p_gmac, uint8_t uc_phy_addr)
 {
-	// This function is designed for simple single interface directly
-	// attached to host CPU.
-	//
-	// In Zodiac FX, we have to manage the status of 4 ports (port1-4),
-	// placed over port5, controlling via micrel registers.
-	
-	// Here we setup port5 negotiation.
-	uint32_t ul_retry_max = ETH_PHY_RETRY_MAX;
-	uint32_t ul_value;
-	uint32_t ul_phy_anar;
-	uint32_t ul_phy_analpar;
-	uint32_t ul_retry_count = 0;
-	uint8_t uc_speed = 0;
-	uint8_t uc_fd=0;
-	uint8_t uc_rc;
-
-	gmac_enable_management(p_gmac, true);
-
-	/* Set up control register */
-	uc_rc = gmac_phy_read(p_gmac, uc_phy_addr, GMII_BMCR, &ul_value);
-	if (uc_rc != GMAC_OK) {
-		gmac_enable_management(p_gmac, false);
-		return uc_rc;
-	}
-
-	ul_value &= ~(uint32_t)GMII_AUTONEG; /* Remove auto-negotiation enable */
-	ul_value &= ~(uint32_t)(GMII_LOOPBACK | GMII_POWER_DOWN);
-	ul_value |= (uint32_t)GMII_ISOLATE; /* Electrically isolate PHY */
-	uc_rc = gmac_phy_write(p_gmac, uc_phy_addr, GMII_BMCR, ul_value);
-	if (uc_rc != GMAC_OK) {
-		gmac_enable_management(p_gmac, false);
-		return uc_rc;
-	}
-
-	/* 
-	 * Set the Auto_negotiation Advertisement Register.
-	 * MII advertising for Next page.
-	 * 100BaseTxFD and HD, 10BaseTFD and HD, IEEE 802.3.
-	 */
-	ul_phy_anar = GMII_100TX_FDX | GMII_100TX_HDX | GMII_10_FDX | GMII_10_HDX | 
-			GMII_AN_IEEE_802_3;
-	uc_rc = gmac_phy_write(p_gmac, uc_phy_addr, GMII_ANAR, ul_phy_anar);
-	if (uc_rc != GMAC_OK) {
-		gmac_enable_management(p_gmac, false);
-		return uc_rc;
-	}
-
-	/* Read & modify control register */
-	uc_rc = gmac_phy_read(p_gmac, uc_phy_addr, GMII_BMCR, &ul_value);
-	if (uc_rc != GMAC_OK) {
-		gmac_enable_management(p_gmac, false);
-		return uc_rc;
-	}
-
-	ul_value |= GMII_SPEED_SELECT | GMII_AUTONEG | GMII_DUPLEX_MODE;
-	uc_rc = gmac_phy_write(p_gmac, uc_phy_addr, GMII_BMCR, ul_value);
-	if (uc_rc != GMAC_OK) {
-		gmac_enable_management(p_gmac, false);
-		return uc_rc;
-	}
-
-	/* Restart auto negotiation */
-	ul_value |= (uint32_t)GMII_RESTART_AUTONEG;
-	ul_value &= ~(uint32_t)GMII_ISOLATE;
-	uc_rc = gmac_phy_write(p_gmac, uc_phy_addr, GMII_BMCR, ul_value);
-	if (uc_rc != GMAC_OK) {
-		gmac_enable_management(p_gmac, false);
-		return uc_rc;
-	}
-
-	/* Check if auto negotiation is completed */
-	while (1) {
-		uc_rc = gmac_phy_read(p_gmac, uc_phy_addr, GMII_BMSR, &ul_value);
-		if (uc_rc != GMAC_OK) {
-			gmac_enable_management(p_gmac, false);
-			return uc_rc;
-		}
-		/* Done successfully */
-		if (ul_value & GMII_AUTONEG_COMP) {
-			break;
-		}
-
-		/* Timeout check */
-		if (ul_retry_max) {
-			if (++ul_retry_count >= ul_retry_max) {
-				gmac_enable_management(p_gmac, false);
-				return GMAC_TIMEOUT;
-			}
-		}
-	}
-
-	/* Get the auto negotiate link partner base page */
-	uc_rc = gmac_phy_read(p_gmac, uc_phy_addr, GMII_ANLPAR, &ul_phy_analpar);
-	if (uc_rc != GMAC_OK) {
-		gmac_enable_management(p_gmac, false);
-		return uc_rc;
-	}
-
-
-	/* Set up the GMAC link speed */
-	if ((ul_phy_anar & ul_phy_analpar) & GMII_100TX_FDX) {
-		/* Set MII for 100BaseTX and Full Duplex */
-		uc_speed = true;
-		uc_fd = true;
-	} else if ((ul_phy_anar & ul_phy_analpar) & GMII_10_FDX) {
-		/* Set MII for 10BaseT and Full Duplex */
-		uc_speed = false;
-		uc_fd = true;
-	} else if ((ul_phy_anar & ul_phy_analpar) & GMII_100TX_HDX) {
-		/* Set MII for 100BaseTX and half Duplex */
-		uc_speed = true;
-		uc_fd = false;
-	} else if ((ul_phy_anar & ul_phy_analpar) & GMII_10_HDX) {
-		/* Set MII for 10BaseT and half Duplex */
-		uc_speed = false;
-		uc_fd = false;
-	}
-
-	gmac_set_speed(p_gmac, uc_speed);
-	gmac_enable_full_duplex(p_gmac, uc_fd);
-
-	/* Select Media Independent Interface type */
-	gmac_select_mii_mode(p_gmac, ETH_PHY_MODE);
-
-	gmac_enable_transmit(GMAC, true);
-	gmac_enable_receive(GMAC, true);
-
-	gmac_enable_management(p_gmac, false);
-	return uc_rc;
+	/* Function not required*/
+	return GMAC_OK;
 }
 
 /**
@@ -415,27 +215,14 @@ uint8_t ethernet_phy_auto_negotiate(Gmac *p_gmac, uint8_t uc_phy_addr)
  */
 uint8_t ethernet_phy_reset(Gmac *p_gmac, uint8_t uc_phy_addr)
 {
-	uint32_t ul_bmcr;
-	uint8_t uc_phy_address = uc_phy_addr;
-	uint32_t ul_timeout = ETH_PHY_TIMEOUT;
-	uint8_t uc_rc = GMAC_TIMEOUT;
-
-	gmac_enable_management(p_gmac, true);
-
-	ul_bmcr = GMII_RESET;
-	gmac_phy_write(p_gmac, uc_phy_address, GMII_BMCR, ul_bmcr);
-
-	do {
-		gmac_phy_read(p_gmac, uc_phy_address, GMII_BMCR, &ul_bmcr);
-		ul_timeout--;
-	} while ((ul_bmcr & GMII_RESET) && ul_timeout);
-
-	gmac_enable_management(p_gmac, false);
-
-	if (!ul_timeout) {
-		uc_rc = GMAC_OK;
-	}
-	return (uc_rc);
+	UNUSED(p_gmac);
+	UNUSED(uc_phy_addr);
+	
+	switch_write(2,76);
+	for(int x = 0;x<100000;x++);
+	switch_write(2,12);
+	
+	return 0;
 }
 
 /**
@@ -481,9 +268,6 @@ err_t ethernetif_init(struct netif *netif)
 	netif->linkoutput = gmac_low_level_output;
 	/* Initialize the hardware */
 	//gmac_low_level_init(netif);
-	// The procedure in gmac_low_level_init is handled in
-	// ASF gmac driver.
-	// This ethernetif_init looks came from sam4e_gmac.c
 	
 	/* Set MAC hardware address length. */
 	netif->hwaddr_len = sizeof(Zodiac_Config.MAC_address);

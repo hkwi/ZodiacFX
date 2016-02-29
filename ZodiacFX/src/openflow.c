@@ -191,6 +191,7 @@ uint16_t ofp_tx_write(struct ofp_pcb *pcb, const void *data, uint16_t length){
 		if(ERR_OK == tcp_write(pcb->tcp, data, length, TCP_WRITE_FLAG_COPY)){
 			pcb->trigger_output = true;
 			pcb->txlen += length;
+			tcp_output(pcb->tcp);
 			return length;
 		}
 	}
@@ -474,6 +475,7 @@ static err_t ofp_poll_cb(void *arg, struct tcp_pcb *pcb){
 				.xid = htonl(ofp->xid++),
 			};
 			ofp_tx_write(ofp, &hdr, 8);
+			return tcp_output(ofp->tcp);
 		}
 	}
 	if(ofp->negotiated){
@@ -492,11 +494,13 @@ static err_t ofp_sent_cb(void *arg, struct tcp_pcb *tcp, u16_t len){
 	ofp->alive_until = sys_get_ms() + OFP_TIMEOUT;
 	switch(ofp_handle(ofp)){
 		case OFP_OK:
-			ofp_update(ofp);
+			tcp_output(ofp->tcp);
 			break;
 		case OFP_CLOSE:
+			tcp_output(ofp->tcp);
 			return ofp_close(ofp, CONNECT_RETRY_INTERVAL);
 	}
+	ofp_update(ofp);
 	return ERR_OK;
 }
 
@@ -534,11 +538,13 @@ static err_t ofp_recv_cb(void *arg, struct tcp_pcb *tcp, struct pbuf *p, err_t e
 	ofp->alive_until = sys_get_ms() + OFP_TIMEOUT;
 	switch(ofp_handle(ofp)){
 		case OFP_OK:
-			ofp_update(ofp);
+			tcp_output(ofp->tcp);
 			break;
 		case OFP_CLOSE:
+			tcp_output(ofp->tcp);
 			return ofp_close(ofp, CONNECT_RETRY_INTERVAL);
 	}
+	ofp_update(ofp);
 	if(n == NULL){
 		return ERR_BUF;
 	}
@@ -584,6 +590,9 @@ static err_t ofp_connected_cb(void *arg, struct tcp_pcb *tcp, err_t err){
 			.xid = htonl(ofp->xid++),
 		};
 		ret = ofp_tx_write(ofp, &hdr, 8);
+	}
+	if (ret == OFP_OK){
+		return tcp_output(ofp->tcp);
 	}
 	return ret;
 }
@@ -687,7 +696,6 @@ void openflow_task(){
 		if(c->ofp.sleep_until - sys_get_ms() < 0x80000000U) {
 			continue;
 		}
-		
 		struct tcp_pcb *tcp = tcp_new();
 		if (tcp == NULL){
 			c->ofp.sleep_until = sys_get_ms() + CONNECT_RETRY_INTERVAL;
