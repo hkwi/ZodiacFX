@@ -28,6 +28,7 @@
  */
 
 #include <asf.h>
+#include <signal.h>
 #include "board.h"
 #include "tc.h"
 #include "timers.h"
@@ -35,7 +36,7 @@
 #include "lwip/sys.h"
 
 /* Clock tick count. */
-static volatile uint64_t gs_ul_clk_tick;
+static volatile sig_atomic_t clk_ev = 0;
 
 #include "pmc.h"
 #include "sysclk.h"
@@ -46,14 +47,11 @@ static volatile uint64_t gs_ul_clk_tick;
  */
 void TC0_Handler(void)
 {
-	/* Remove warnings. */
-	volatile uint32_t ul_dummy;
+	/* Increase tick. */
+	clk_ev++;
 
 	/* Clear status bit to acknowledge interrupt. */
-	ul_dummy = TC0->TC_CHANNEL[0].TC_SR;
-
-	/* Increase tick. */
-	gs_ul_clk_tick++;
+	volatile uint32_t ul_dummy = TC0->TC_CHANNEL[0].TC_SR;
 }
 
 /**
@@ -67,7 +65,7 @@ void sys_init_timing(void)
 	uint32_t ul_sysclk = sysclk_get_cpu_hz();
 
 	/* Clear tick value. */
-	gs_ul_clk_tick = 0;
+	clk_ev = 0;
 
 	/* Configure PMC. */
 	pmc_enable_periph_clk(ID_TC0);
@@ -89,14 +87,22 @@ void sys_init_timing(void)
  * Return the number of timer ticks (ms).
  *
  */
-uint32_t sys_get_ms(void)
-{
+static uint64_t gs_ul_clk_tick = 0;
+
+uint64_t sys_get_ms64(void){
+	sig_atomic_t inc = clk_ev;
+	clk_ev = 0;
+	if(inc > 0){
+		gs_ul_clk_tick += inc;
+	}
 	return gs_ul_clk_tick;
 }
 
-uint64_t sys_get_ms64(void){
-	return gs_ul_clk_tick;
+uint32_t sys_get_ms(void)
+{
+	return sys_get_ms64();
 }
+
 
 #if ((LWIP_VERSION) != ((1U << 24) | (3U << 16) | (2U << 8) | (LWIP_VERSION_RC)))
 u32_t sys_now(void)

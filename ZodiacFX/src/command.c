@@ -47,16 +47,18 @@
 
 // Global variables
 extern struct zodiac_config Zodiac_Config;
-extern struct ofp_flow_mod flow_match[MAX_FLOWS];
-extern struct ofp13_flow_mod flow_match13[MAX_FLOWS];
+extern struct fx_port_count fx_port_counts[MAX_PORTS];
+extern struct fx_table_count fx_table_counts[MAX_TABLES];
+extern struct fx_flow_count fx_flow_counts[MAX_FLOWS];
+extern struct fx_flow_timeout fx_flow_timeouts[MAX_FLOWS];
+extern struct fx_flow fx_flows[MAX_FLOWS];
 extern int32_t ul_temp;
 extern int iLastFlow;
 extern int OF_Version;
 extern bool masterselect;
 
 // Local Variables
-bool showintro = true;		
-uint8_t uCLIContext = 0;
+static uint8_t uCLIContext = 0;
 struct arp_header arp_test;
 uint8_t esc_char = 0;
 int charcount = 0;
@@ -106,6 +108,8 @@ void saveConfig(void)
 static char cCommand[64] = {0};
 static char cCommand_last[64] = {0};
 
+static bool showintro = true;
+
 /*
 *	Main command line loop
 *
@@ -125,22 +129,21 @@ void task_command(void){
 	
 	while(udi_cdc_is_rx_ready()){
 		ch = udi_cdc_getc();
-		
-		if (showintro == true)	// Show the intro only on the first key press
-		{
+		// Show the intro only on the first key press
+		if (showintro == true){
 			printintro();
 			showintro = false;
-			ch = 13;
+			continue; // discard the input
 		}	
 		if (ch == 27) // Is this the start of an escape key sequence?
 		{
 			esc_char = 1;
-			return;
+			continue;
 		}
 		if (ch == 91 && esc_char == 1) // Second key in the escape key sequence?
 		{
 			esc_char = 2;
-			return;
+			continue;
 		}
 		if (ch == 65 && esc_char == 2 && charcount == 0)	// Last char for the escape sequence for the up arrow (ascii codes 27,91,65)
 		{
@@ -277,6 +280,62 @@ void command_root(char *command, char *param1, char *param2, char *param3)
 		return;
 	}
 	
+	// Display ports statics
+	if (strcmp(command, "show") == 0 && strcmp(param1, "ports") == 0)
+	{
+		printf("\r\n-------------------------------------------------------------------------\r\n");
+		for(int i=0;i<MAX_PORTS;i++){
+			printf("\r\nPort %d\r\n",i+1);
+			if((get_switch_status(i) & OFPPS13_LINK_DOWN) == 0){
+				printf(" Status: UP\r\n");
+			}else{
+				printf(" Status: DOWN\r\n");
+			}
+			for (int x=0;x<MAX_VLANS;x++){
+				if (Zodiac_Config.vlan_list[x].portmap[i] == 1){
+					if (Zodiac_Config.vlan_list[x].uVlanType == 0) printf(" VLAN type: Unassigned\r\n");
+					if (Zodiac_Config.vlan_list[x].uVlanType == 1) printf(" VLAN type: OpenFlow\r\n");
+					if (Zodiac_Config.vlan_list[x].uVlanType == 2) printf(" VLAN type: Native\r\n");
+					printf(" VLAN ID: %d\r\n", Zodiac_Config.vlan_list[x].uVlanID);
+				}
+			}
+			sync_switch_port_counts(i);
+			printf(" RX Bytes: %" PRIu64 "\r\n", fx_port_counts[i].rx_bytes);
+			printf(" TX Bytes: %" PRIu64 "\r\n", fx_port_counts[i].tx_bytes);
+			if (Zodiac_Config.of_port[i] == 1) printf(" RX Packets: %" PRIu64 "\r\n", fx_port_counts[i].rx_packets);
+			if (Zodiac_Config.of_port[i] == 1) printf(" TX Packets: %" PRIu64 "\r\n", fx_port_counts[i].tx_packets);
+			printf(" RX Dropped Packets: %" PRIu64 "\r\n", fx_port_counts[i].rx_dropped);
+			printf(" TX Dropped Packets: %" PRIu64 "\r\n", fx_port_counts[i].tx_dropped);
+			printf(" RX CRC Errors: %" PRIu64 "\r\n", fx_port_counts[i].rx_crc_err);
+		}
+		printf("\r\n-------------------------------------------------------------------------\r\n\n");
+		return;
+	}
+	
+	// Display Config
+	if (strcmp(command, "show")==0 && strcmp(param1, "status")==0){
+		uint64_t totaltime = sys_get_ms64()/1000u;
+		int day = totaltime/(24*3600);
+		totaltime = totaltime%(24*3600);
+		int hr = totaltime/3600;
+		totaltime = totaltime%3600;
+		int min = totaltime/60;
+		int sec = totaltime%60;
+
+		printf("\r\n-------------------------------------------------------------------------\r\n");
+		printf("Device Status\r\n");
+		printf(" Firmware Version: %s\r\n",VERSION);
+		printf(" CPU Temp: %d C\r\n", (int)ul_temp);
+		if (day > 1){
+			printf(" Uptime: %d days, %02d:%02d:%02d", day, hr, min, sec);
+		}else if (day > 0){
+			printf(" Uptime: %d day, %02d:%02d:%02d", day, hr, min, sec);
+		}else{
+			printf(" Uptime: %02d:%02d:%02d", hr, min, sec);
+		}
+		printf("\r\n-------------------------------------------------------------------------\r\n\n");
+		return;
+	}
 	
 	// Unknown Command
 	printf("Unknown command\r\n");
@@ -708,6 +767,7 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 	return;	
 }
 
+
 /*
 *	Commands within the OpenFlow context
 *	
@@ -722,7 +782,214 @@ void command_openflow(char *command, char *param1, char *param2, char *param3)
 		uCLIContext = CLI_ROOT;
 		return;
 	}
+
+	// Openflow Flows
+	if (strcmp(command, "show") == 0 && strcmp(param1, "flows") == 0){
+		printf("\r\n-------------------------------------------------------------------------\r\n");
+		for(int t=0; t<MAX_TABLES; t++){
+			for(uint16_t priority=0xffff; priority=0; priority--){
+				bool found = false;
+				for(int i=0; i<iLastFlow; i++){
+					if(fx_flows[i].priority == priority){
+						found = true;
+						break;
+					}
+				}
+				if(found){
+					for(int i=0; i<iLastFlow; i++){
+						if(fx_flows[i].table_id != t){
+							continue;
+						}
+						if(fx_flows[i].priority != priority){
+							continue;
+						}
+						// OpenFlow v1.3 (0x04) Flow Table
+						if( OF_Version == 4){
+							printf("\r\nFlow %d\r\n",i+1);
+							printf(" Match:\r\n");
+							const uint8_t *pos = fx_flows[i].oxm;
+							while (pos < (const uint8_t *)fx_flows[i].oxm + fx_flows[i].oxm_length){
+								switch(pos[2]>>1){
+									case OFPXMT13_OFB_IN_PORT:
+									printf("  In Port: %d\r\n", ntohl(*(uint32_t*)(uintptr_t)pos+4));
+									break;
+							
+									case OFPXMT13_OFB_ETH_DST:
+									printf("  Destination MAC: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8"\r\n",
+										pos[4], pos[5], pos[6], pos[7], pos[8], pos[9]);
+									break;
+							
+									case OFPXMT13_OFB_ETH_SRC:
+									printf("  Source MAC: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8"\r\n",
+										pos[4], pos[5], pos[6], pos[7], pos[8], pos[9]);
+									break;
+
+									case OFPXMT13_OFB_ETH_TYPE:
+									{
+										uint16_t eth_type = ntohs(*(uint16_t*)((uintptr_t)pos+4));
+										if (eth_type == 0x0806 )printf("  ETH Type: ARP\r\n");
+										else if (eth_type == 0x0800 )printf("  ETH Type: IPv4\r\n");
+										else if (eth_type == 0x86dd )printf("  ETH Type: IPv6\r\n");
+										else printf("  ETH Type: %04"PRIx16"\r\n", eth_type);
+									}
+									break;
+
+									case OFPXMT13_OFB_IP_PROTO:
+									if (pos[4] == 1 )printf("  IP Protocol: ICMP\r\n");
+									else if (pos[4] == 6 )printf("  IP Protocol: TCP\r\n");
+									else if (pos[4] == 17 )printf("  IP Protocol: UDP\r\n");
+									else printf("  IP Protocol: %"PRIu8"\r\n", pos[4]);
+									break;
+
+									case OFPXMT13_OFB_IPV4_SRC:
+									printf("  Source IP: %"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8"\r\n",
+										pos[4], pos[5], pos[6], pos[7]);
+									break;
+							
+									case OFPXMT13_OFB_IPV4_DST:
+									printf("  Destination IP: %"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8"\r\n",
+										pos[4], pos[5], pos[6], pos[7]);
+									break;
+
+									case OFPXMT13_OFB_IPV6_SRC:
+									printf("  Source IP: %04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16"\r\n",
+										*(uint16_t*)((uintptr_t)pos+4),
+										*(uint16_t*)((uintptr_t)pos+6),
+										*(uint16_t*)((uintptr_t)pos+8),
+										*(uint16_t*)((uintptr_t)pos+10),
+										*(uint16_t*)((uintptr_t)pos+12),
+										*(uint16_t*)((uintptr_t)pos+14),
+										*(uint16_t*)((uintptr_t)pos+16),
+										*(uint16_t*)((uintptr_t)pos+18));
+									break;
+							
+									case OFPXMT13_OFB_IPV6_DST:
+									printf("  Destination IP: %04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16"\r\n",
+										*(uint16_t*)((uintptr_t)pos+4),
+										*(uint16_t*)((uintptr_t)pos+6),
+										*(uint16_t*)((uintptr_t)pos+8),
+										*(uint16_t*)((uintptr_t)pos+10),
+										*(uint16_t*)((uintptr_t)pos+12),
+										*(uint16_t*)((uintptr_t)pos+14),
+										*(uint16_t*)((uintptr_t)pos+16),
+										*(uint16_t*)((uintptr_t)pos+18));
+									break;
+							
+									case OFPXMT13_OFB_TCP_SRC:
+									printf("  Source TCP Port: %d\r\n", *(uint16_t*)((uintptr_t)pos + 4));
+									break;
+
+									case OFPXMT13_OFB_TCP_DST:
+									printf("  Destination TCP Port: %d\r\n", *(uint16_t*)((uintptr_t)pos + 4));
+									break;
+
+									case OFPXMT13_OFB_UDP_SRC:
+									printf("  Source UDP Port: %d\r\n", *(uint16_t*)((uintptr_t)pos + 4));
+									break;
+
+									case OFPXMT13_OFB_UDP_DST:
+									printf("  Destination UDP Port: %d\r\n", *(uint16_t*)((uintptr_t)pos + 4));
+									break;
+							
+									case OFPXMT13_OFB_VLAN_VID:
+									printf("  VLAN ID: %d\r\n", 0x0FFF & *(uint16_t*)((uintptr_t)pos + 4));
+									break;
+							
+								};
+								pos += pos[3];
+							}
+							printf("\r Attributes:\r\n");
+							printf("  Priority: %d\t\t\tDuration: %d secs\r\n",
+								fx_flows[i].priority, (sys_get_ms()-fx_flow_timeouts[i].init) / 1000u);
+							printf("  Hard Timeout: %d secs\t\t\tIdle Timeout: %d secs\r\n", 
+								fx_flow_timeouts[i].hard_timeout, fx_flow_timeouts[i].idle_timeout);
+							printf("  Byte Count: %d\t\t\tPacket Count: %d\r\n",
+								fx_flow_counts[i].byte_count, fx_flow_counts[i].packet_count);
+							if (fx_flows[i].ops != NULL){
+								printf("\r Instructions:\r\n");
+								uintptr_t pos = fx_flows[i].ops;
+								while(pos < (uintptr_t)fx_flows[i].ops + fx_flows[i].ops_length){
+									struct ofp13_instruction *inst_ptr = (void*)pos;
+									if(ntohs(inst_ptr->type) == OFPIT13_APPLY_ACTIONS){
+										printf("  Apply Actions:\r\n");
+										struct ofp13_instruction_actions *inst_act = (void*)pos;
+										uintptr_t pos_act = inst_act->actions;
+										while(pos_act < (uintptr_t)inst_act->actions + ntohs(inst_act->len)){
+											struct ofp13_action_header *act_hdr = (void*)pos_act;
+											if (htons(act_hdr->type) == OFPAT13_OUTPUT){
+												struct ofp13_action_output *act_output = (void*)pos_act;
+												if (htonl(act_output->port) < OFPP13_MAX)
+												{
+													printf("   Output Port: %d\r\n", htonl(act_output->port));
+												} else if (htonl(act_output->port) == OFPP13_CONTROLLER)
+												{
+													printf("   Output: CONTROLLER \r\n");
+												} else if (htonl(act_output->port) == OFPP13_FLOOD)
+												{
+													printf("   Output: FLOOD \r\n");
+												}
+												// XXX: implement more
+												act_output = NULL;
+											}
+											if (htons(act_hdr->type) == OFPAT13_SET_FIELD)
+											{
+												struct ofp13_action_set_field *act_set_field = (void*)pos_act;
+												const uint8_t *oxm = act_set_field->field;
+												switch(oxm[2]>>1)
+												{
+													case OFPXMT13_OFB_VLAN_VID:
+													printf("   Set VLAN ID: %d\r\n", 0x0fff & *(uint16_t*)((uintptr_t)oxm+4));
+													break;
+												// XXX: implement more
+												};
+											}
+											pos_act += htons(act_hdr->len);
+										}
+									}
+									pos += htons(inst_ptr->len);
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if(iLastFlow == 0){
+			printf("No Flows installed!\r\n");
+		}
+		printf("\r\n-------------------------------------------------------------------------\r\n\n");
+		return;
+	}
+	
+	// Openflow status
+	if (strcmp(command, "show") == 0 && strcmp(param1, "status") == 0)
+	{
+		printf("\r\n-------------------------------------------------------------------------\r\n");
+		printf("OpenFlow Status\r");
+		if (Zodiac_Config.OFEnabled == OF_DISABLED){
+			printf(" Status: Disabled\r\n");
+		} else if (switch_negotiated()){
+			printf(" Status: Connected\r\n");
+		} else {
+			printf(" Status: Disconnected\r\n");
+		}
+		if (OF_Version == 1) printf(" Version: 1.0 (0x01)\r\n");
+		if (OF_Version == 4) printf(" Version: 1.3 (0x04)\r\n");
+		printf(" No tables: %d\r\n", MAX_TABLES);
+		printf(" No flows: %d\r\n",iLastFlow);
+		uint64_t lookup = 0;
+		uint64_t matched = 0;
+		for(uint8_t i=0; i<MAX_TABLES; i++){
+			lookup += fx_table_counts[i].lookup;
+			matched += fx_table_counts[i].matched;
+		}
+		printf(" Aggregated table lookups: %"PRIu64"\r\n", lookup);
+		printf(" Aggregated table matches: %"PRIu64"\r\n", matched);
 		
+		printf("\r\n-------------------------------------------------------------------------\r\n");
+		return;
+	}
+
 	// Enable OpenFlow
 	if (strcmp(command, "enable")==0)
 	{
@@ -739,6 +1006,30 @@ void command_openflow(char *command, char *param1, char *param2, char *param3)
 		Zodiac_Config.OFEnabled = OF_DISABLED;
 		disableOF();
 		printf("Openflow Disabled\r\n");
+		return;
+	}
+
+	// Clear the flow table
+	if (strcmp(command, "clear")==0 && strcmp(param1, "flows")==0){
+		printf("Clearing flow table, %d flow deleted.\r\n", iLastFlow);
+		for(int i=0; i<iLastFlow; i++){
+			if((fx_flows[i].flags & OFPFF13_SEND_FLOW_REM) != 0){
+				uint8_t send_bits = 0;
+				for(int j=0; j<MAX_CONTROLLERS; j++){
+					send_bits |= 1<<j;
+				}
+				fx_flows[i].send_bits = send_bits;
+				fx_flows[i].reason = OFPRR13_DELETE;
+			} else {
+				if(fx_flows[i].oxm != NULL){
+					free(fx_flows[i].oxm);
+				}
+				if(fx_flows[i].ops != NULL){
+					free(fx_flows[i].ops);
+				}
+				memset(fx_flows+i, 0, sizeof(struct fx_flow));
+			}
+		}
 		return;
 	}
 
@@ -789,12 +1080,6 @@ void command_debug(char *command, char *param1, char *param2, char *param3)
 		while (1);
 	}
 	
-	if(strcmp(command, "temp")==0)
-	{
-		printf("Temp %"PRIi32"\r\n", ul_temp);
-		return;
-	}
-	
 	// Unknown Command response
 	printf("Unknown command\r\n");
 	return;	
@@ -838,6 +1123,7 @@ void printhelp(void)
 	printf(" show version\r\n");
 	printf("\r\n");
 	printf("Config:\r\n");
+	printf(" load\r\n");
 	printf(" save\r\n");
 	printf(" show config\r\n");
 	printf(" show vlans\r\n");

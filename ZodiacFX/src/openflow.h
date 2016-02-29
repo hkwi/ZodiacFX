@@ -49,8 +49,9 @@ enum ofp_pcb_status {
 struct ofp_pcb {
 	struct tcp_pcb *tcp;
 	struct pbuf *rbuf; // controller may send very long message
-	int rskip;
+	uint32_t rskip;
 	uint32_t txlen;
+	bool trigger_output;
 	bool negotiated;
 	bool mpreq_on; // processing multipart
 	uint16_t mpreq_pos; // multipart processing position.
@@ -203,6 +204,7 @@ struct fx_group_bucket {
 #define MAX_GROUPS 0
 #define MAX_GROUP_BUCKETS 0
 
+bool switch_negotiated(void);
 void openflow_init(void);
 void openflow_task(void);
 void openflow_pipeline(struct fx_packet*);
