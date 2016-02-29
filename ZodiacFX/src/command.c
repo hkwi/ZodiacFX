@@ -786,168 +786,162 @@ void command_openflow(char *command, char *param1, char *param2, char *param3)
 	// Openflow Flows
 	if (strcmp(command, "show") == 0 && strcmp(param1, "flows") == 0){
 		printf("\r\n-------------------------------------------------------------------------\r\n");
-		for(int t=0; t<MAX_TABLES; t++){
-			for(uint16_t priority=0xffff; priority=0; priority--){
-				bool found = false;
+		for(uint8_t t=0; t<MAX_TABLES; t++){
+			for(int32_t priority=0xffffu; priority>=0; priority--){
 				for(int i=0; i<iLastFlow; i++){
-					if(fx_flows[i].priority == priority){
-						found = true;
-						break;
+					if((fx_flows[i].send_bits & FX_FLOW_ACTIVE) == 0){
+						continue;
 					}
-				}
-				if(found){
-					for(int i=0; i<iLastFlow; i++){
-						if(fx_flows[i].table_id != t){
-							continue;
-						}
-						if(fx_flows[i].priority != priority){
-							continue;
-						}
-						// OpenFlow v1.3 (0x04) Flow Table
-						if( OF_Version == 4){
-							printf("\r\nFlow %d\r\n",i+1);
-							printf(" Match:\r\n");
-							const uint8_t *pos = fx_flows[i].oxm;
-							while (pos < (const uint8_t *)fx_flows[i].oxm + fx_flows[i].oxm_length){
-								switch(pos[2]>>1){
-									case OFPXMT13_OFB_IN_PORT:
-									printf("  In Port: %d\r\n", ntohl(*(uint32_t*)(uintptr_t)pos+4));
-									break;
+					if(fx_flows[i].table_id != t){
+						continue;
+					}
+					if(fx_flows[i].priority != priority){
+						continue;
+					}
+					// OpenFlow v1.3 (0x04) Flow Table
+					if( OF_Version == 4){
+						printf("\r\nFlow %d\r\n",i+1);
+						printf(" Match:\r\n");
+						const uint8_t *pos = fx_flows[i].oxm;
+						while (pos < (const uint8_t *)fx_flows[i].oxm + fx_flows[i].oxm_length){
+							switch(pos[2]>>1){
+								case OFPXMT13_OFB_IN_PORT:
+								printf("  In Port: %"PRIx32"\r\n", ntohl(get32((uintptr_t)pos + 4)));
+								break;
 							
-									case OFPXMT13_OFB_ETH_DST:
-									printf("  Destination MAC: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8"\r\n",
-										pos[4], pos[5], pos[6], pos[7], pos[8], pos[9]);
-									break;
+								case OFPXMT13_OFB_ETH_DST:
+								printf("  Destination MAC: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8"\r\n",
+									pos[4], pos[5], pos[6], pos[7], pos[8], pos[9]);
+								break;
 							
-									case OFPXMT13_OFB_ETH_SRC:
-									printf("  Source MAC: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8"\r\n",
-										pos[4], pos[5], pos[6], pos[7], pos[8], pos[9]);
-									break;
+								case OFPXMT13_OFB_ETH_SRC:
+								printf("  Source MAC: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8"\r\n",
+									pos[4], pos[5], pos[6], pos[7], pos[8], pos[9]);
+								break;
 
-									case OFPXMT13_OFB_ETH_TYPE:
-									{
-										uint16_t eth_type = ntohs(*(uint16_t*)((uintptr_t)pos+4));
-										if (eth_type == 0x0806 )printf("  ETH Type: ARP\r\n");
-										else if (eth_type == 0x0800 )printf("  ETH Type: IPv4\r\n");
-										else if (eth_type == 0x86dd )printf("  ETH Type: IPv6\r\n");
-										else printf("  ETH Type: %04"PRIx16"\r\n", eth_type);
-									}
-									break;
-
-									case OFPXMT13_OFB_IP_PROTO:
-									if (pos[4] == 1 )printf("  IP Protocol: ICMP\r\n");
-									else if (pos[4] == 6 )printf("  IP Protocol: TCP\r\n");
-									else if (pos[4] == 17 )printf("  IP Protocol: UDP\r\n");
-									else printf("  IP Protocol: %"PRIu8"\r\n", pos[4]);
-									break;
-
-									case OFPXMT13_OFB_IPV4_SRC:
-									printf("  Source IP: %"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8"\r\n",
-										pos[4], pos[5], pos[6], pos[7]);
-									break;
-							
-									case OFPXMT13_OFB_IPV4_DST:
-									printf("  Destination IP: %"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8"\r\n",
-										pos[4], pos[5], pos[6], pos[7]);
-									break;
-
-									case OFPXMT13_OFB_IPV6_SRC:
-									printf("  Source IP: %04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16"\r\n",
-										*(uint16_t*)((uintptr_t)pos+4),
-										*(uint16_t*)((uintptr_t)pos+6),
-										*(uint16_t*)((uintptr_t)pos+8),
-										*(uint16_t*)((uintptr_t)pos+10),
-										*(uint16_t*)((uintptr_t)pos+12),
-										*(uint16_t*)((uintptr_t)pos+14),
-										*(uint16_t*)((uintptr_t)pos+16),
-										*(uint16_t*)((uintptr_t)pos+18));
-									break;
-							
-									case OFPXMT13_OFB_IPV6_DST:
-									printf("  Destination IP: %04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16"\r\n",
-										*(uint16_t*)((uintptr_t)pos+4),
-										*(uint16_t*)((uintptr_t)pos+6),
-										*(uint16_t*)((uintptr_t)pos+8),
-										*(uint16_t*)((uintptr_t)pos+10),
-										*(uint16_t*)((uintptr_t)pos+12),
-										*(uint16_t*)((uintptr_t)pos+14),
-										*(uint16_t*)((uintptr_t)pos+16),
-										*(uint16_t*)((uintptr_t)pos+18));
-									break;
-							
-									case OFPXMT13_OFB_TCP_SRC:
-									printf("  Source TCP Port: %d\r\n", *(uint16_t*)((uintptr_t)pos + 4));
-									break;
-
-									case OFPXMT13_OFB_TCP_DST:
-									printf("  Destination TCP Port: %d\r\n", *(uint16_t*)((uintptr_t)pos + 4));
-									break;
-
-									case OFPXMT13_OFB_UDP_SRC:
-									printf("  Source UDP Port: %d\r\n", *(uint16_t*)((uintptr_t)pos + 4));
-									break;
-
-									case OFPXMT13_OFB_UDP_DST:
-									printf("  Destination UDP Port: %d\r\n", *(uint16_t*)((uintptr_t)pos + 4));
-									break;
-							
-									case OFPXMT13_OFB_VLAN_VID:
-									printf("  VLAN ID: %d\r\n", 0x0FFF & *(uint16_t*)((uintptr_t)pos + 4));
-									break;
-							
-								};
-								pos += pos[3];
-							}
-							printf("\r Attributes:\r\n");
-							printf("  Priority: %d\t\t\tDuration: %d secs\r\n",
-								fx_flows[i].priority, (sys_get_ms()-fx_flow_timeouts[i].init) / 1000u);
-							printf("  Hard Timeout: %d secs\t\t\tIdle Timeout: %d secs\r\n", 
-								fx_flow_timeouts[i].hard_timeout, fx_flow_timeouts[i].idle_timeout);
-							printf("  Byte Count: %d\t\t\tPacket Count: %d\r\n",
-								fx_flow_counts[i].byte_count, fx_flow_counts[i].packet_count);
-							if (fx_flows[i].ops != NULL){
-								printf("\r Instructions:\r\n");
-								uintptr_t pos = fx_flows[i].ops;
-								while(pos < (uintptr_t)fx_flows[i].ops + fx_flows[i].ops_length){
-									struct ofp13_instruction *inst_ptr = (void*)pos;
-									if(ntohs(inst_ptr->type) == OFPIT13_APPLY_ACTIONS){
-										printf("  Apply Actions:\r\n");
-										struct ofp13_instruction_actions *inst_act = (void*)pos;
-										uintptr_t pos_act = inst_act->actions;
-										while(pos_act < (uintptr_t)inst_act->actions + ntohs(inst_act->len)){
-											struct ofp13_action_header *act_hdr = (void*)pos_act;
-											if (htons(act_hdr->type) == OFPAT13_OUTPUT){
-												struct ofp13_action_output *act_output = (void*)pos_act;
-												if (htonl(act_output->port) < OFPP13_MAX)
-												{
-													printf("   Output Port: %d\r\n", htonl(act_output->port));
-												} else if (htonl(act_output->port) == OFPP13_CONTROLLER)
-												{
-													printf("   Output: CONTROLLER \r\n");
-												} else if (htonl(act_output->port) == OFPP13_FLOOD)
-												{
-													printf("   Output: FLOOD \r\n");
-												}
-												// XXX: implement more
-												act_output = NULL;
-											}
-											if (htons(act_hdr->type) == OFPAT13_SET_FIELD)
-											{
-												struct ofp13_action_set_field *act_set_field = (void*)pos_act;
-												const uint8_t *oxm = act_set_field->field;
-												switch(oxm[2]>>1)
-												{
-													case OFPXMT13_OFB_VLAN_VID:
-													printf("   Set VLAN ID: %d\r\n", 0x0fff & *(uint16_t*)((uintptr_t)oxm+4));
-													break;
-												// XXX: implement more
-												};
-											}
-											pos_act += htons(act_hdr->len);
-										}
-									}
-									pos += htons(inst_ptr->len);
+								case OFPXMT13_OFB_ETH_TYPE:
+								{
+									uint16_t eth_type = ntohs(get16((uintptr_t)pos + 4));
+									if (eth_type == 0x0806 )printf("  ETH Type: ARP\r\n");
+									else if (eth_type == 0x0800 )printf("  ETH Type: IPv4\r\n");
+									else if (eth_type == 0x86dd )printf("  ETH Type: IPv6\r\n");
+									else printf("  ETH Type: %04"PRIx16"\r\n", eth_type);
 								}
+								break;
+
+								case OFPXMT13_OFB_IP_PROTO:
+								if (pos[4] == 1 )printf("  IP Protocol: ICMP\r\n");
+								else if (pos[4] == 6 )printf("  IP Protocol: TCP\r\n");
+								else if (pos[4] == 17 )printf("  IP Protocol: UDP\r\n");
+								else printf("  IP Protocol: %"PRIu8"\r\n", pos[4]);
+								break;
+
+								case OFPXMT13_OFB_IPV4_SRC:
+								printf("  Source IP: %"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8"\r\n",
+									pos[4], pos[5], pos[6], pos[7]);
+								break;
+							
+								case OFPXMT13_OFB_IPV4_DST:
+								printf("  Destination IP: %"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8"\r\n",
+									pos[4], pos[5], pos[6], pos[7]);
+								break;
+
+								case OFPXMT13_OFB_IPV6_SRC:
+								printf("  Source IP: %04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16"\r\n",
+									get16((uintptr_t)pos+4),
+									get16((uintptr_t)pos+6),
+									get16((uintptr_t)pos+8),
+									get16((uintptr_t)pos+10),
+									get16((uintptr_t)pos+12),
+									get16((uintptr_t)pos+14),
+									get16((uintptr_t)pos+16),
+									get16((uintptr_t)pos+18));
+								break;
+							
+								case OFPXMT13_OFB_IPV6_DST:
+								printf("  Destination IP: %04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16":%04"PRIu16"\r\n",
+									get16((uintptr_t)pos+4),
+									get16((uintptr_t)pos+6),
+									get16((uintptr_t)pos+8),
+									get16((uintptr_t)pos+10),
+									get16((uintptr_t)pos+12),
+									get16((uintptr_t)pos+14),
+									get16((uintptr_t)pos+16),
+									get16((uintptr_t)pos+18));
+								break;
+							
+								case OFPXMT13_OFB_TCP_SRC:
+								printf("  Source TCP Port: %d\r\n", get16((uintptr_t)pos + 4));
+								break;
+
+								case OFPXMT13_OFB_TCP_DST:
+								printf("  Destination TCP Port: %d\r\n", get16((uintptr_t)pos + 4));
+								break;
+
+								case OFPXMT13_OFB_UDP_SRC:
+								printf("  Source UDP Port: %d\r\n", get16((uintptr_t)pos + 4));
+								break;
+
+								case OFPXMT13_OFB_UDP_DST:
+								printf("  Destination UDP Port: %d\r\n", get16((uintptr_t)pos + 4));
+								break;
+							
+								case OFPXMT13_OFB_VLAN_VID:
+								printf("  VLAN ID: %d\r\n", 0x0FFF & get16((uintptr_t)pos + 4));
+								break;
+							
+							};
+							pos += 4 + pos[3];
+						}
+						printf("\r Attributes:\r\n");
+						printf("  Priority: %d\t\t\tDuration: %d secs\r\n",
+							fx_flows[i].priority, (sys_get_ms()-fx_flow_timeouts[i].init) / 1000u);
+						printf("  Hard Timeout: %d secs\t\t\tIdle Timeout: %d secs\r\n", 
+							fx_flow_timeouts[i].hard_timeout, fx_flow_timeouts[i].idle_timeout);
+						printf("  Byte Count: %d\t\t\tPacket Count: %d\r\n",
+							fx_flow_counts[i].byte_count, fx_flow_counts[i].packet_count);
+						if (fx_flows[i].ops != NULL){
+							printf("\r Instructions:\r\n");
+							uintptr_t pos = fx_flows[i].ops;
+							while(pos < (uintptr_t)fx_flows[i].ops + fx_flows[i].ops_length){
+								struct ofp13_instruction inst;
+								memcpy(&inst, (void*)pos, sizeof(inst));
+								if(ntohs(inst.type) == OFPIT13_APPLY_ACTIONS){
+									printf("  Apply Actions:\r\n");
+									struct ofp13_instruction_actions inst_act;
+									memcpy(&inst_act, (void*)pos, sizeof(inst_act));
+									
+									uintptr_t pos_act = pos + offsetof(struct ofp13_instruction_actions, actions);
+									while(pos_act < pos + ntohs(inst_act.len)){
+										struct ofp13_action_header act_hdr;
+										memcpy(&act_hdr, (void*)pos_act, sizeof(act_hdr));
+										
+										if (htons(act_hdr.type) == OFPAT13_OUTPUT){
+											struct ofp13_action_output act_output;
+											memcpy(&act_output, (void*)pos_act, sizeof(act_output));
+											
+											if (htonl(act_output.port) < OFPP13_MAX){
+												printf("   Output Port: %d\r\n", htonl(act_output.port));
+											} else if (htonl(act_output.port) == OFPP13_CONTROLLER){
+												printf("   Output: CONTROLLER \r\n");
+											} else if (htonl(act_output.port) == OFPP13_FLOOD){
+												printf("   Output: FLOOD \r\n");
+											}
+											// XXX: implement more
+										}
+										if (htons(act_hdr.type) == OFPAT13_SET_FIELD){
+											const uint8_t *oxm = (void*)(pos_act + offsetof(struct ofp13_action_set_field, field));
+											switch(oxm[2]>>1){
+												case OFPXMT13_OFB_VLAN_VID:
+												printf("   Set VLAN ID: %d\r\n", 0x0fff & get16((uintptr_t)oxm+4));
+												break;
+											// XXX: implement more
+											};
+										}
+										pos_act += htons(act_hdr.len);
+									}
+								}
+								pos += htons(inst.len);
 							}
 						}
 					}

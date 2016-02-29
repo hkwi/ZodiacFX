@@ -480,7 +480,7 @@ void sync_switch_port_counts(uint8_t port_index){
 	usart_spi_read_packet(USART_SPI, rxreg, 5);
 	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
 	fx_port_counts[port_index].rx_bytes += (((uint64_t)rxreg[0] & 0x0f)<<32);
-	fx_port_counts[port_index].rx_bytes += htonl(*(uint32_t*)((uintptr_t)rxreg+1));
+	fx_port_counts[port_index].rx_bytes += htonl(get32((uintptr_t)rxreg+1));
 	
 	//switch_write(110, 0x1d);
 	//switch_write(111, 4*port_index + 1);
@@ -502,7 +502,7 @@ void sync_switch_port_counts(uint8_t port_index){
 	usart_spi_read_packet(USART_SPI, rxreg, 5);
 	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
 	fx_port_counts[port_index].tx_bytes += (((uint64_t)rxreg[0] & 0x0f)<<32);
-	fx_port_counts[port_index].tx_bytes += htonl(*(uint32_t*)((uintptr_t)rxreg+1));
+	fx_port_counts[port_index].tx_bytes += htonl(get32((uintptr_t)rxreg+1));
 
 	//switch_write(110, 0x1d);
 	//switch_write(111, 4*port_index + 2);
@@ -562,7 +562,7 @@ void sync_switch_port_counts(uint8_t port_index){
 	usart_spi_write_packet(USART_SPI, txreg, 2);
 	usart_spi_read_packet(USART_SPI, rxreg, 4);
 	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
-	rx_err = ntohl(*(uint32_t*)(uintptr_t)rxreg) & 0x1fffffff;
+	rx_err = ntohl(get32((uintptr_t)rxreg)) & 0x1fffffff;
 	fx_port_counts[port_index].rx_frame_err += rx_err;
 	rx_err_sum += rx_err;
 	
@@ -585,7 +585,7 @@ void sync_switch_port_counts(uint8_t port_index){
 	usart_spi_write_packet(USART_SPI, txreg, 2);
 	usart_spi_read_packet(USART_SPI, rxreg, 4);
 	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
-	rx_err = ntohl(*(uint32_t*)(uintptr_t)rxreg) & 0x1fffffff;
+	rx_err = ntohl(get32((uintptr_t)rxreg)) & 0x1fffffff;
 	fx_port_counts[port_index].rx_over_err += rx_err;
 	rx_err_sum += rx_err;
 	
@@ -608,7 +608,7 @@ void sync_switch_port_counts(uint8_t port_index){
 	usart_spi_write_packet(USART_SPI, txreg, 2);
 	usart_spi_read_packet(USART_SPI, rxreg, 4);
 	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
-	rx_err = ntohl(*(uint32_t*)(uintptr_t)rxreg) & 0x1fffffff;
+	rx_err = ntohl(get32((uintptr_t)rxreg)) & 0x1fffffff;
 	fx_port_counts[port_index].rx_crc_err += rx_err;
 	rx_err_sum += rx_err;
 	
@@ -632,7 +632,7 @@ void sync_switch_port_counts(uint8_t port_index){
 	usart_spi_write_packet(USART_SPI, txreg, 2);
 	usart_spi_read_packet(USART_SPI, rxreg, 4);
 	usart_spi_deselect_device(USART_SPI, &USART_SPI_DEVICE);
-	fx_port_counts[port_index].collisions += ntohl(*(uint32_t*)(uintptr_t)rxreg) & 0x1fffffff;
+	fx_port_counts[port_index].collisions += ntohl(get32((uintptr_t)rxreg)) & 0x1fffffff;
 }
 
 void switch_init(){
@@ -669,10 +669,11 @@ void switch_init(){
 	switch_write(86,232);	// Set CPU interface to MII
 	switch_write(12, 0x46);	// Turn on tail tag mode
 	// CPU(port5) controls the traffic
-	switch_write(21, 0x03);
-	switch_write(37, 0x03);
-	switch_write(53, 0x03);
-	switch_write(69, 0x03);
+	// "trap" mode requires ACL bit on.
+	switch_write(21, 0x07);
+	switch_write(37, 0x07);
+	switch_write(53, 0x07);
+	switch_write(69, 0x07);
 	// port vlan
 	switch_write(17, 0x11);
 	switch_write(33, 0x12);
@@ -680,11 +681,11 @@ void switch_init(){
 	switch_write(65, 0x18);
 	switch_write(81, 0x1F);
 	// disable learning
-	switch_write(18, 0x07);
-	switch_write(34, 0x07);
-	switch_write(50, 0x07);
-	switch_write(66, 0x07);
-	switch_write(82, 0x07);
+	// There's no defined combination of 0x07. We use 0x06.
+	switch_write(18, 0x06);
+	switch_write(34, 0x06);
+	switch_write(50, 0x06);
+	switch_write(66, 0x06);
 	// flush
 	switch_write(2, 0x36);
 	

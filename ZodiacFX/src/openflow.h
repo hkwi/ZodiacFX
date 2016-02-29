@@ -241,3 +241,21 @@ static const uint8_t ETH_TYPE_IPV4[] = { 0x08, 0x00 };
 static const uint8_t ETH_TYPE_IPV6[] = { 0x86, 0xdd };
 
 	
+static inline uint32_t get16(uintptr_t pos){
+	uint16_t ret;
+	memcpy(&ret, (void*)pos, 2);
+	return ret;
+}
+
+static inline uint32_t get32(uintptr_t pos){
+	uint32_t ret;
+	memcpy(&ret, (void*)pos, 4);
+	return ret;
+}
+
+static inline uint32_t get64(uintptr_t pos){
+	uint64_t ret;
+	memcpy(&ret, (void*)pos, 8);
+	return ret;
+}
+
