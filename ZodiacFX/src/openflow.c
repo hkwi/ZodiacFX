@@ -47,9 +47,6 @@ extern struct zodiac_config Zodiac_Config;
 int iLastFlow = 0;
 int OF_Version = 0x00;
 
-// prototype
-static bool switch_negotiated(void);
-
 volatile bool disable_ofp_pipeline = false;
 
 struct fx_switch_config fx_switch = {
@@ -192,6 +189,7 @@ uint16_t ofp_tx_room(const struct ofp_pcb *pcb){
 uint16_t ofp_tx_write(struct ofp_pcb *pcb, const void *data, uint16_t length){
 	if(ofp_tx_room(pcb) >= length){
 		if(ERR_OK == tcp_write(pcb->tcp, data, length, TCP_WRITE_FLAG_COPY)){
+			pcb->trigger_output = true;
 			pcb->txlen += length;
 			return length;
 		}
@@ -611,7 +609,7 @@ static void ofp_err_cb(void *arg, err_t err){
 
 struct controller controllers[MAX_CONTROLLERS] = {};
 
-static bool switch_negotiated(void){
+bool switch_negotiated(void){
 	for(int i=0; i<MAX_CONTROLLERS; i++){
 		if(controllers[i].ofp.negotiated){
 			return true;
@@ -680,7 +678,10 @@ void openflow_task(){
 			continue;
 		}
 		if(c->ofp.tcp != NULL) {
-			tcp_output(c->ofp.tcp);
+			if(c->ofp.trigger_output){
+				tcp_output(c->ofp.tcp);
+				c->ofp.trigger_output = false;
+			}
 			continue;
 		}
 		if(c->ofp.sleep_until - sys_get_ms() < 0x80000000U) {
