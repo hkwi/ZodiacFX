@@ -477,10 +477,11 @@ bool field_match13(const void *oxm_a, int len_a, const void *oxm_b, int len_b){
 	if ((prereq_b & PREREQ_INVALID) != 0){
 		return false;
 	}
-	if (((prereq_a & PREREQ_ETH_TYPE_MASK) & (prereq_b & PREREQ_ETH_TYPE_MASK)) != (prereq_a & PREREQ_ETH_TYPE_MASK)){
+	// 0 means don't care
+	if (((prereq_a & PREREQ_ETH_TYPE_MASK) | (prereq_b & PREREQ_ETH_TYPE_MASK)) != (prereq_a & PREREQ_ETH_TYPE_MASK)){
 		return false;
 	}
-	if (((prereq_a & PREREQ_ND_MASK) & (prereq_b & PREREQ_ND_MASK)) != (prereq_a & PREREQ_ND_MASK)){
+	if (((prereq_a & PREREQ_ND_MASK) | (prereq_b & PREREQ_ND_MASK)) != (prereq_a & PREREQ_ND_MASK)){
 		return false;
 	}
 	if ((prereq_b & PREREQ_VLAN) != 0) {

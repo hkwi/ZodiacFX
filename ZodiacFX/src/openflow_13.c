@@ -175,7 +175,7 @@ static int filter_ofp13_flow(int first, struct ofp13_filter filter){
 }
 
 static uint16_t fill_ofp13_flow_stats(const void *cunit, int *mp_index, void *buffer, uint16_t capacity){
-	const struct ofp13_flow_stats_request unit;
+	struct ofp13_flow_stats_request unit;
 	memcpy(&unit, cunit, sizeof(unit));
 	
 	struct ofp13_filter filter = {
@@ -220,8 +220,9 @@ static uint16_t fill_ofp13_flow_stats(const void *cunit, int *mp_index, void *bu
 		// struct ofp13_flow_stats(including ofp13_match)
 		memcpy((void*)buf, &stats, sizeof(struct ofp13_flow_stats));
 		// oxm_fields
-		len = offsetof(struct ofp13_flow_stats, match) + offsetof(struct ofp13_match, oxm_fields);
+		len = offsetof(struct ofp13_flow_stats, match) + 4;
 		buf = (uintptr_t)buffer + length + len;
+		memset((void*)buf, 0, ALIGN8(fx_flows[i].oxm_length+4)-4);
 		memcpy((void*)buf, fx_flows[i].oxm, fx_flows[i].oxm_length);
 		// instructions
 		len = offset_inst;
@@ -471,9 +472,9 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 				memcpy(unit, self->mp_in, offsetof(struct ofp13_flow_stats_request, match) + ALIGN8(ntohs(hint.match.length)));
 				uint16_t unitlength = fill_ofp13_flow_stats(unit,
 					&self->mp_out_index, ofp_buffer+16, ofp_tx_room(self)-16);
-				mpres.flags = 0;
-				if(self->mp_out_index >= 0){
-					mpres.flags = htons(OFPMPF13_REPLY_MORE);
+				mpres.flags = htons(OFPMPF13_REPLY_MORE);
+				if(self->mp_out_index < 0){
+					mpres.flags = 0;
 				}
 				mpres.header.length = htons(16+unitlength);
 				memcpy(ofp_buffer, &mpres, 16);
@@ -636,6 +637,8 @@ static enum ofp_pcb_status add_ofp13_flow(struct ofp_pcb *self, void *oxm, uint1
 	uint16_t length = ntohs(hint.header.length);
 	
 	if(hint.table_id > OFPTT13_MAX){
+		if(oxm != NULL) free(oxm);
+		if(ops != NULL) free(ops);
 		return ofp_write_error(self, OFPET13_FLOW_MOD_FAILED, OFPFMFC13_BAD_TABLE_ID);
 	}
 	if((hint.flags & htons(OFPFF13_CHECK_OVERLAP)) != 0){
@@ -1353,7 +1356,7 @@ void check_ofp13_packet_in(){
 static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const void *oxm){
 	uint8_t *data = packet->data;
 	const uint8_t *o = oxm;
-	switch(ntohl(get32(oxm))){
+	switch(ntohl(get32((uintptr_t)oxm))){
 		// OXM_OF_IN_PORT, OXM_OF_IN_PHY_PORT not valid by spec.
 		// OXM_OF_METADATA not valid by spec.
 		case OXM_OF_ETH_DST_W:
@@ -1975,19 +1978,27 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb *self){
 				// openflow send_flow_removed limitation
 				return ofp_write_error(self, OFPET13_FLOW_MOD_FAILED, OFPFMFC13_UNKNOWN);
 			}
-			void *oxm = malloc(oxm_len);
-			void *ops = malloc(ops_len);
-			if(oxm == NULL || ops == NULL){
-				if(oxm != NULL) free(oxm);
-				if(ops != NULL) free(ops);
-				return ofp_write_error(self, OFPET13_FLOW_MOD_FAILED, OFPFMFC13_UNKNOWN);
+			void *oxm = NULL;
+			void *ops = NULL;
+			
+			if(oxm_len > 0){
+				oxm = malloc(oxm_len);
+				if(oxm == NULL){
+					return ofp_write_error(self, OFPET13_FLOW_MOD_FAILED, OFPFMFC13_UNKNOWN);
+				}
+				offset = offsetof(struct ofp13_flow_mod, match) + 4;
+				pbuf_copy_partial(self->rbuf, oxm, oxm_len, self->rskip + offset);
 			}
-			
-			offset = offsetof(struct ofp13_flow_mod, match) + 4;
-			pbuf_copy_partial(self->rbuf, oxm, oxm_len, self->rskip + offset);
-			offset = offsetof(struct ofp13_flow_mod, match) + ALIGN8(ntohs(hint.match.length));
-			pbuf_copy_partial(self->rbuf, ops, ops_len, self->rskip + offset);
-			
+			if(ops_len > 0){
+				ops = malloc(ops_len);
+				if(ops == NULL){
+					if(oxm != NULL) free(oxm);
+					return ofp_write_error(self, OFPET13_FLOW_MOD_FAILED, OFPFMFC13_UNKNOWN);
+				}
+				offset = offsetof(struct ofp13_flow_mod, match) + ALIGN8(ntohs(hint.match.length));
+				pbuf_copy_partial(self->rbuf, ops, ops_len, self->rskip + offset);
+			}
+
 			ret = mod_ofp13_flow(self, oxm, oxm_len, ops, ops_len);
 		}
 		break;

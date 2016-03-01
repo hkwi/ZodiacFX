@@ -64,19 +64,19 @@ struct fx_switch_config fx_switch = {
  */
 char ofp_buffer[OFP_BUFFER_LEN];
 
-struct fx_port fx_ports[MAX_PORTS] = {};
-struct fx_port_count fx_port_counts[MAX_PORTS] = {};
+struct fx_port fx_ports[MAX_PORTS] = {0};
+struct fx_port_count fx_port_counts[MAX_PORTS] = {0};
 
-struct fx_table_count fx_table_counts[MAX_TABLES] = {};
+struct fx_table_count fx_table_counts[MAX_TABLES] = {0};
 
 uint32_t fx_buffer_id = 0; // incremental
-struct fx_packet_in fx_packet_ins[MAX_BUFFERS] = {};
+struct fx_packet_in fx_packet_ins[MAX_BUFFERS] = {0};
 
-struct fx_flow fx_flows[MAX_FLOWS] = {};
-struct fx_flow_timeout fx_flow_timeouts[MAX_FLOWS] = {};
-struct fx_flow_count fx_flow_counts[MAX_FLOWS] = {};
+struct fx_flow fx_flows[MAX_FLOWS] = {0};
+struct fx_flow_timeout fx_flow_timeouts[MAX_FLOWS] = {0};
+struct fx_flow_count fx_flow_counts[MAX_FLOWS] = {0};
 
-struct fx_meter_band fx_meter_bands[MAX_METER_BANDS] = {}; // excluding slowpath, controller
+struct fx_meter_band fx_meter_bands[MAX_METER_BANDS] = {0}; // excluding slowpath, controller
 
 static void cleanup_fx_flows(void){
 	int found;
@@ -344,6 +344,7 @@ static enum ofp_pcb_status ofp_multipart_complete(struct ofp_pcb *self){
 
 
 static void ofp_async(void){
+	// ofp_async is for sending postponed messages.
 	if(OF_Version == 4){
 		send_ofp13_flow_rem();
 		send_ofp13_port_status();
@@ -678,8 +679,10 @@ void openflow_init(){
 }
 
 void openflow_task(){
+	// check the trigger side.
 	update_fx_ports();
 	watch_fx_flows();
+	
 	for(int i=0; i<MAX_CONTROLLERS; i++){
 		struct controller *c = &controllers[i];
 		// no-address, or connected, or sleeping
