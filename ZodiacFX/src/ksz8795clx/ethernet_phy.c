@@ -219,7 +219,7 @@ uint8_t ethernet_phy_reset(Gmac *p_gmac, uint8_t uc_phy_addr)
 	UNUSED(uc_phy_addr);
 	
 	switch_write(2,76);
-	for(int x = 0;x<100000;x++);
+	for(volatile int x = 0;x<100000;x++);
 	switch_write(2,12);
 	
 	return 0;
