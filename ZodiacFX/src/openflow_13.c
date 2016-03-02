@@ -986,28 +986,35 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 			int has_mask = pos[2] & 0x01;
 			switch(pos[2]>>1){
 				case OFPXMT13_OFB_IN_PORT:
-				if(packet->in_port != get32((uintptr_t)pos + 4)){
+				if(memcmp(&packet->in_port, pos+4, 4) != 0){
 					return false;
 				}
 				break;
 				
 				case OFPXMT13_OFB_IN_PHY_PORT:
-				if(packet->in_phy_port != get32((uintptr_t)pos + 4)){
+				if(memcmp(packet->in_phy_port, pos+4, 4) != 0){
 					return false;
 				}
 				break;
 				
 				case OFPXMT13_OFB_METADATA:
 				{
-					uint64_t value = packet->metadata;
+					union {
+						uint64_t raw;
+						char b[8];
+					} value = { .raw = packet->metadata };
 					if(has_mask){
-						value &= get64((uintptr_t)pos + 12);
+						for(int i=0; i<8; i++){
+							if(value.b[i] & pos[12+i] != pos[4+i]){
+								return false;
+							}
+						}
 						count += bits_on(pos+12, 8);
 					} else {
+						if(memcmp(value.b, pos+4, 8) != 0){
+							return false;
+						}
 						count += 64;
-					}
-					if(value != get64((uintptr_t)pos + 4)){
-						return false;
 					}
 				}
 				break;
@@ -1120,12 +1127,18 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				}else{
 					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(has_mask){
-						if((hdr->src.addr & get32((uintptr_t)pos+8)) != get32((uintptr_t)pos+4)){
-							return false;
+						union {
+							uint32_t raw;
+							uint8_t b[4];
+						} value = { .raw=hdr->src.addr };
+						for(int i=0; i<4; i++){
+							if(value.b[i] & pos[8+i] != pos[4+i]){
+								return false;
+							}
 						}
 						count += bits_on(pos+8, 4);
 					} else {
-						if(hdr->src.addr != get32((uintptr_t)pos+4)){
+						if(memcmp(&hdr->src.addr, pos+4, 4) != 0){
 							return false;
 						}
 						count += 32;
@@ -1139,12 +1152,18 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				}else{
 					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(has_mask){
-						if((hdr->dest.addr & get32((uintptr_t)pos+8)) != get32((uintptr_t)pos+4)){
-							return false;
+						union {
+							uint32_t raw;
+							uint8_t b[4];
+						} value = { .raw=hdr->dest.addr };
+						for(int i=0; i<4; i++){
+							if(value.b[i] & pos[8+i] != pos[4+i]){
+								return false;
+							}
 						}
 						count += bits_on(pos+8, 4);
 					} else {
-						if(hdr->dest.addr != get32((uintptr_t)pos+4)){
+						if(memcmp(&hdr->dest.addr, pos+4, 4) != 0){
 							return false;
 						}
 						count += 32;
@@ -1159,7 +1178,7 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 						return false;
 					}
 					struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
-					if(tcphdr->src != get16((uintptr_t)pos + 4)){
+					if(memcmp(&tcphdr->src, pos+4, 2) != 0){
 						return false;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
@@ -1176,7 +1195,7 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 						return false;
 					}
 					struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
-					if(tcphdr->dest != *(uint16_t*)((uintptr_t)pos + 4)){
+					if(memcmp(&tcphdr->dest, pos+4, 2) != 0){
 						return false;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
@@ -1193,7 +1212,7 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 						return false;
 					}
 					struct tcp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
-					if(udphdr->src != get16((uintptr_t)pos + 4)){
+					if(memcmp(&udphdr->src, pos+4, 2) != 0){
 						return false;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
@@ -1210,7 +1229,7 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 						return false;
 					}
 					struct tcp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
-					if(udphdr->dest != get16((uintptr_t)pos + 4)){
+					if(memcmp(&udphdr->dest, pos+4, 2) != 0){
 						return false;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
@@ -1356,7 +1375,7 @@ void check_ofp13_packet_in(){
 static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const void *oxm){
 	uint8_t *data = packet->data;
 	const uint8_t *o = oxm;
-	switch(ntohl(get32((uintptr_t)oxm))){
+	switch(ntohl(*(uint32_t*)oxm)){
 		// OXM_OF_IN_PORT, OXM_OF_IN_PHY_PORT not valid by spec.
 		// OXM_OF_METADATA not valid by spec.
 		case OXM_OF_ETH_DST_W:

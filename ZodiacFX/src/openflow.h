@@ -240,7 +240,7 @@ static const uint8_t ETH_TYPE_VLAN2[] = { 0x88, 0xa8 }; // QinQ
 static const uint8_t ETH_TYPE_IPV4[] = { 0x08, 0x00 };
 static const uint8_t ETH_TYPE_IPV6[] = { 0x86, 0xdd };
 
-	
+// workaround for alignment	
 static inline uint32_t get16(uintptr_t pos){
 	uint16_t ret;
 	memcpy(&ret, (void*)pos, 2);
