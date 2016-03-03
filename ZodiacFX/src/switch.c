@@ -322,7 +322,7 @@ void gmac_write(const void *buffer, uint16_t ul_size, uint8_t port){
 	}
 	memcpy(tx_buffer, buffer, ul_size);
 	uint8_t *last_byte = (void*)((uintptr_t)tx_buffer + tx_buffer_length);
-	*last_byte = port;
+	*last_byte = 0x40|port; // with no queue
 	gmac_dev_write(&gs_gmac_dev, tx_buffer, tx_buffer_length+1, NULL);
 	return;
 }
@@ -695,6 +695,18 @@ void switch_task(struct netif *netif){
 					.in_port = htonl(tag+1),
 					.malloced = false,
 				};
+/*
+				printf("pkt @%"PRIu8" \r\n", tag);
+				if(tag==0){ tag = 1<<1; }
+				if(tag==1){ tag = 1<<0; }
+					if(rx_buffer_length==1514){
+				for(int i=0; i<rx_buffer_length; i++){
+					printf("%02"PRIx8, rx_buffer[i]);
+				}
+					}
+				printf(" len=%"PRIu16"\r\n", rx_buffer_length);
+				gmac_write(rx_buffer, rx_buffer_length, 0x40|tag);
+*/
 				fx_port_counts[tag].rx_packets++;
 				openflow_pipeline(&frame);
 				if(frame.malloced){
