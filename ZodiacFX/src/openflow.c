@@ -681,8 +681,8 @@ void openflow_init(){
 
 void openflow_task(){
 	// check the trigger side.
-//	update_fx_ports();
-//	watch_fx_flows();
+	update_fx_ports();
+	watch_fx_flows();
 	
 	for(int i=0; i<MAX_CONTROLLERS; i++){
 		struct controller *c = &controllers[i];
