@@ -657,38 +657,11 @@ void switch_init(){
 			Zodiac_Config.MAC_address[5],
 		},
 	};
+	/* Init KSZ8795 registers */
+	switch_write(86, 0xe8);	// Set CPU interface to MII
+	switch_write(12, 0x46);	// Turn on tail tag mode
 	/* Init GMAC driver structure */
 	gmac_dev_init(GMAC, &gs_gmac_dev, &gmac_option);
-	// soft reset
-	switch_write(2, 0x76);
-	switch_write(31, 0x11);
-	switch_write(47, 0x11);
-	switch_write(63, 0x11);
-	switch_write(79, 0x11);
-	/* Init KSZ8795 registers */
-	switch_write(86,232);	// Set CPU interface to MII
-	switch_write(12, 0x46);	// Turn on tail tag mode
-	// CPU(port5) controls the traffic
-	// "trap" mode requires ACL bit on.
-	switch_write(21, 0x07);
-	switch_write(37, 0x07);
-	switch_write(53, 0x07);
-	switch_write(69, 0x07);
-	// port vlan
-	switch_write(17, 0x11);
-	switch_write(33, 0x12);
-	switch_write(49, 0x14);
-	switch_write(65, 0x18);
-	switch_write(81, 0x1F);
-	// disable learning
-	// There's no defined combination of 0x07. We use 0x06.
-	switch_write(18, 0x06);
-	switch_write(34, 0x06);
-	switch_write(50, 0x06);
-	switch_write(66, 0x06);
-	// flush
-	switch_write(2, 0x36);
-	
 	/* Enable Interrupt */
 	NVIC_EnableIRQ(GMAC_IRQn);
 	

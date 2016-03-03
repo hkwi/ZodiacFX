@@ -36,7 +36,7 @@
 #include "lwip/sys.h"
 
 /* Clock tick count. */
-static volatile sig_atomic_t clk_ev = 0;
+static volatile uint32_t gs_ul_clk_tick = 0;
 
 #include "pmc.h"
 #include "sysclk.h"
@@ -48,7 +48,7 @@ static volatile sig_atomic_t clk_ev = 0;
 void TC0_Handler(void)
 {
 	/* Increase tick. */
-	clk_ev++;
+	gs_ul_clk_tick++;
 
 	/* Clear status bit to acknowledge interrupt. */
 	volatile uint32_t ul_dummy = TC0->TC_CHANNEL[0].TC_SR;
@@ -63,9 +63,6 @@ void sys_init_timing(void)
 	uint32_t ul_div;
 	uint32_t ul_tcclks;
 	uint32_t ul_sysclk = sysclk_get_cpu_hz();
-
-	/* Clear tick value. */
-	clk_ev = 0;
 
 	/* Configure PMC. */
 	pmc_enable_periph_clk(ID_TC0);
@@ -87,20 +84,20 @@ void sys_init_timing(void)
  * Return the number of timer ticks (ms).
  *
  */
-static uint64_t gs_ul_clk_tick = 0;
+static uint32_t gs_ul_clk_high = 0; // should use sig_atomic_t ?
 
 uint64_t sys_get_ms64(void){
-	sig_atomic_t inc = clk_ev;
-	clk_ev = 0;
-	if(inc > 0){
-		gs_ul_clk_tick += inc;
+	static uint32_t clk = 0;
+	if (gs_ul_clk_tick < clk){
+		gs_ul_clk_high++;
 	}
-	return gs_ul_clk_tick;
+	clk = gs_ul_clk_tick;
+	return ((uint64_t)gs_ul_clk_high<<32) + gs_ul_clk_tick;
 }
 
 uint32_t sys_get_ms(void)
 {
-	return sys_get_ms64();
+	return gs_ul_clk_tick;
 }
 
 

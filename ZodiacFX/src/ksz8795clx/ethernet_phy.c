@@ -169,11 +169,13 @@ uint8_t ethernet_phy_set_link(Gmac *p_gmac, uint8_t uc_phy_addr,
 	UNUSED(uc_phy_addr);
 	UNUSED(uc_apply_setting_flag);
 
-	switch_write(1,144);
+	switch_write(1,144); // stop switch
 	gmac_enable_transmit(GMAC, false);
 	gmac_enable_receive(GMAC, false);
 	
-	switch_write(86,232);
+	/* Init KSZ8795 registers */
+	switch_write(86, 0xe8);	// Set CPU interface to MII
+	switch_write(12, 0x46);	// Turn on tail tag mode
 	
 	gmac_set_speed(p_gmac, true);
 	gmac_enable_full_duplex(p_gmac, true);
@@ -184,7 +186,7 @@ uint8_t ethernet_phy_set_link(Gmac *p_gmac, uint8_t uc_phy_addr,
 	gmac_select_mii_mode(p_gmac, ETH_PHY_MODE);
 	gmac_enable_transmit(GMAC, true);
 	gmac_enable_receive(GMAC, true);
-	switch_write(1,145);
+	switch_write(1,145); // start switch
 	ethernet_phy_reset(GMAC,uc_phy_addr);
 
 	return GMAC_OK;
@@ -218,9 +220,35 @@ uint8_t ethernet_phy_reset(Gmac *p_gmac, uint8_t uc_phy_addr)
 	UNUSED(p_gmac);
 	UNUSED(uc_phy_addr);
 	
-	switch_write(2,76);
+//	switch_write(2,76);
+	// soft reset
+	switch_write(2, 0x4c);
+	switch_write(31, 0x11);
+	switch_write(47, 0x11);
+	switch_write(63, 0x11);
+	switch_write(79, 0x11);
+	// CPU(port5) controls the traffic
+	// "trap" mode requires ACL bit on.
+	switch_write(21, 0x07);
+	switch_write(37, 0x07);
+	switch_write(53, 0x07);
+	switch_write(69, 0x07);
+	// port vlan
+	switch_write(17, 0x11);
+	switch_write(33, 0x12);
+	switch_write(49, 0x14);
+	switch_write(65, 0x18);
+	switch_write(81, 0x1F);
+	// disable learning
+	// There's no defined combination of 0x07. We use 0x06.
+	switch_write(18, 0x06);
+	switch_write(34, 0x06);
+	switch_write(50, 0x06);
+	switch_write(66, 0x06);
+	// flush
 	for(volatile int x = 0;x<100000;x++);
-	switch_write(2,12);
+	switch_write(2, 0x3c);
+//	switch_write(2,12);
 	
 	return 0;
 }

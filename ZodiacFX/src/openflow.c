@@ -629,13 +629,14 @@ bool switch_negotiated(void){
 }
 
 #define PORT_STATUS_UPDATE_INTERVAL 1000u
-static uint32_t update_port_status_next_ms = PORT_STATUS_UPDATE_INTERVAL;
 #define PORT_COUNTS_UPDATE_INTERVAL 7000u
-static uint32_t update_port_counts_next_ms = PORT_COUNTS_UPDATE_INTERVAL;
-static uint8_t update_port_counts_next_no = 0;
 static void update_fx_ports(void){
+	static uint32_t update_port_status_next_ms = PORT_STATUS_UPDATE_INTERVAL;
+	static uint32_t update_port_counts_next_ms = PORT_COUNTS_UPDATE_INTERVAL;
+	static uint8_t update_port_counts_next_no = 0;
 	// Recommendation was read every 30 sec; counters are designed as "read clear".
 	if(update_port_counts_next_ms - sys_get_ms() > 0x80000000u){
+		sys_get_ms64(); // update the high bits.
 		update_port_counts_next_ms = sys_get_ms() + PORT_COUNTS_UPDATE_INTERVAL;
 		sync_switch_port_counts(update_port_counts_next_no);
 		update_port_counts_next_no++;
@@ -680,8 +681,8 @@ void openflow_init(){
 
 void openflow_task(){
 	// check the trigger side.
-	update_fx_ports();
-	watch_fx_flows();
+//	update_fx_ports();
+//	watch_fx_flows();
 	
 	for(int i=0; i<MAX_CONTROLLERS; i++){
 		struct controller *c = &controllers[i];
