@@ -80,11 +80,8 @@ void sys_init_timing(void)
 	tc_start(TC0, 0);
 }
 
-/**
- * Return the number of timer ticks (ms).
- *
- */
-static uint32_t gs_ul_clk_high = 0; // should use sig_atomic_t ?
+// This must be maintained in tracking the wrap-around
+static uint32_t gs_ul_clk_high = 0;
 
 uint64_t sys_get_ms64(void){
 	static uint32_t clk = 0;
@@ -95,6 +92,10 @@ uint64_t sys_get_ms64(void){
 	return ((uint64_t)gs_ul_clk_high<<32) + gs_ul_clk_tick;
 }
 
+/**
+ * Return the number of timer ticks (ms).
+ *
+ */
 uint32_t sys_get_ms(void)
 {
 	return gs_ul_clk_tick;
