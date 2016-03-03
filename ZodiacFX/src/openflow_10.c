@@ -55,7 +55,10 @@ static inline uint64_t (htonll)(uint64_t n)
 	return htonl(1) == 1 ? n : ((uint64_t)htonl(n) << 32) | htonl(n >> 32);
 }
 
-bool match_frame_by_tuple(const struct fx_packet *packet, const struct fx_packet_oob *oob, const struct ofp_match tuple){
+/*
+ *	@return score, negative means unmatch
+ */
+int match_frame_by_tuple(const struct fx_packet *packet, const struct fx_packet_oob *oob, const struct ofp_match tuple){
 	return 0; // TODO
 }
 

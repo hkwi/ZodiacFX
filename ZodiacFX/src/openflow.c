@@ -749,7 +749,8 @@ void openflow_pipeline(struct fx_packet *packet){
 		.action_set_oxm_length = 0,
 	};
 	sync_oob(packet, &oob);
-	
+
+/*	for only packet-in
 	// trim ethernet padding - may make this configurable
 	if(packet->length == 60){
 		const uint8_t *eth_type = packet->data + oob.eth_type_offset;
@@ -758,6 +759,7 @@ void openflow_pipeline(struct fx_packet *packet){
 			packet->length = oob.eth_type_offset + 2 + ntohs(IPH_LEN(iphdr));
 		}
 	}
+*/
 	
 	int flow = lookup_fx_table(packet, &oob, 0);
 	fx_table_counts[0].lookup++;

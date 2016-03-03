@@ -317,7 +317,7 @@ bool oxm_strict_equals(const void *oxm_a, int len_a, const void *oxm_b, int len_
 	for(const uint8_t *pos_a=oxm_a; pos_a < (const uint8_t*)oxm_a+len_a; pos_a += 4+pos_a[3]){
 		bool miss = true;
 		for(const uint8_t *pos_b=oxm_b; pos_b < (const uint8_t*)oxm_b+len_b; pos_b += 4+pos_b[3]){
-			if(pos_a[3] == pos_b[3] && memcmp(pos_a, pos_b, pos_a[3]) == 0){
+			if(pos_a[3] == pos_b[3] && memcmp(pos_a+4, pos_b+4, pos_a[3]) == 0){
 				miss = false;
 				break;
 			}

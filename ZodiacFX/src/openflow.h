@@ -224,8 +224,8 @@ enum ofp_pcb_status ofp13_handle(struct ofp_pcb*);
 
 // flow processing
 int lookup_fx_table(const struct fx_packet*, const struct fx_packet_oob*, uint8_t);
-bool match_frame_by_oxm(const struct fx_packet*, const struct fx_packet_oob*, const void*, uint16_t);
-bool match_frame_by_tuple(const struct fx_packet*, const struct fx_packet_oob*, struct ofp_match);
+int match_frame_by_oxm(const struct fx_packet*, const struct fx_packet_oob*, const void*, uint16_t);
+int match_frame_by_tuple(const struct fx_packet*, const struct fx_packet_oob*, struct ofp_match);
 void execute_ofp13_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
 void execute_ofp10_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
 

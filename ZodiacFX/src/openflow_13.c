@@ -31,6 +31,7 @@
 #include <asf.h>
 #include <string.h>
 #include <stdlib.h>
+#include <inttypes.h>
 #include <lwip/tcp.h>
 #include <lwip/tcp_impl.h>
 #include <lwip/udp.h>
@@ -372,7 +373,7 @@ static uint16_t fill_ofp13_port_desc(int *mp_index, void *buffer, uint16_t capac
 				.max_speed = htonl(100000u),
 			};
 			memcpy(port.hw_addr, Zodiac_Config.MAC_address, 6);
-			sprintf(port.name, "eth%d", i);
+			snprintf(port.name, OFP13_MAX_PORT_NAME_LEN, "eth%d", i);
 			if((curr & (OFPPF13_100MB_FD|OFPPF13_100MB_HD)) != 0){
 				port.curr_speed = htonl(100000u);
 			} else if((curr & (OFPPF13_10MB_FD|OFPPF13_10MB_HD)) != 0){
@@ -978,7 +979,10 @@ static int bits_on(const uint8_t *data, int len){
 	return r;
 }
 
-bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oob *oob, const void *oxm, uint16_t oxm_length){
+/*
+ *	@return score negative means unmatch
+ */
+int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oob *oob, const void *oxm, uint16_t oxm_length){
 	const uint8_t *data = packet->data;
 	int count = 0;
 	for(const uint8_t *pos=oxm; pos<(const uint8_t*)oxm+oxm_length; pos+=4+pos[3]){
@@ -987,13 +991,13 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 			switch(pos[2]>>1){
 				case OFPXMT13_OFB_IN_PORT:
 				if(memcmp(&packet->in_port, pos+4, 4) != 0){
-					return false;
+					return -1;
 				}
 				break;
 				
 				case OFPXMT13_OFB_IN_PHY_PORT:
 				if(memcmp(packet->in_phy_port, pos+4, 4) != 0){
-					return false;
+					return -1;
 				}
 				break;
 				
@@ -1006,13 +1010,13 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 					if(has_mask){
 						for(int i=0; i<8; i++){
 							if(value.b[i] & pos[12+i] != pos[4+i]){
-								return false;
+								return -1;
 							}
 						}
 						count += bits_on(pos+12, 8);
 					} else {
 						if(memcmp(value.b, pos+4, 8) != 0){
-							return false;
+							return -1;
 						}
 						count += 64;
 					}
@@ -1023,14 +1027,14 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				if(has_mask){
 					for(int i=0; i<6; i++){
 						if((data[i] & pos[10+i]) != pos[4+i]){
-							return false;
+							return -1;
 						}
 					}
 					count += bits_on(pos+10, 6);
 				}else{
 					for(int i=0; i<6; i++){
 						if(data[i] != pos[4+i]){
-							return false;
+							return -1;
 						}
 					}
 					count += 48;
@@ -1041,14 +1045,14 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				if(has_mask){
 					for(int i=0; i<6; i++){
 						if((data[6+i] & pos[10+i]) != pos[4+i]){
-							return false;
+							return -1;
 						}
 					}
 					count += bits_on(pos+10, 6);
 					}else{
 					for(int i=0; i<6; i++){
 						if(data[6+i] != pos[4+i]){
-							return false;
+							return -1;
 						}
 					}
 					count += 48;
@@ -1057,25 +1061,25 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				
 				case OFPXMT13_OFB_ETH_TYPE:
 				if(memcmp(packet->data + oob->eth_type_offset, pos+4, 2)!=0){
-					return false;
+					return -1;
 				}
 				break;
 				
 				case OFPXMT13_OFB_VLAN_VID:
 				if(has_mask){
 					if((oob->vlan[0] & pos[6]) != pos[4]){
-						return false;
+						return -1;
 					}
 					if((oob->vlan[1] & pos[7]) != pos[5]){
-						return false;
+						return -1;
 					}
 					count += bits_on(pos+6, 2);
 				} else {
 					if((oob->vlan[0] & 0x1F) != pos[4]){
-						return false;
+						return -1;
 					}
 					if(oob->vlan[1] != pos[5]){
-						return false;
+						return -1;
 					}
 					count += 16;
 				}
@@ -1084,12 +1088,12 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				case OFPXMT13_OFB_VLAN_PCP:
 				if(has_mask){
 					if(((oob->vlan[0]>>5) & pos[5]) != pos[4]){
-						return false;
+						return -1;
 					}
 					count += bits_on(pos+5, 1);
 				}else{
 					if(oob->vlan[0]>>5 != pos[4]){
-						return false;
+						return -1;
 					}
 					count += 3;
 				}
@@ -1099,12 +1103,12 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
 					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_TOS(hdr)>>2 != pos[4]){
-						return false;
+						return -1;
 					}
 				} else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return false; // TODO
+					return -1; // TODO
 				} else {
-					return false;
+					return -1;
 				}
 				break;
 				
@@ -1112,18 +1116,18 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
 					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if((IPH_TOS(hdr)&0x03) != pos[4]){
-						return false;
+						return -1;
 					}
 				} else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return false; // TODO
+					return -1; // TODO
 				} else {
-					return false;
+					return -1;
 				}
 				break;
 				
 				case OFPXMT13_OFB_IPV4_SRC:
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)!=0){
-					return false;
+					return -1;
 				}else{
 					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(has_mask){
@@ -1133,13 +1137,13 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 						} value = { .raw=hdr->src.addr };
 						for(int i=0; i<4; i++){
 							if(value.b[i] & pos[8+i] != pos[4+i]){
-								return false;
+								return -1;
 							}
 						}
 						count += bits_on(pos+8, 4);
 					} else {
 						if(memcmp(&hdr->src.addr, pos+4, 4) != 0){
-							return false;
+							return -1;
 						}
 						count += 32;
 					}
@@ -1148,7 +1152,7 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				
 				case OFPXMT13_OFB_IPV4_DST:
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)!=0){
-					return false;
+					return -1;
 				}else{
 					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(has_mask){
@@ -1158,13 +1162,13 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 						} value = { .raw=hdr->dest.addr };
 						for(int i=0; i<4; i++){
 							if(value.b[i] & pos[8+i] != pos[4+i]){
-								return false;
+								return -1;
 							}
 						}
 						count += bits_on(pos+8, 4);
 					} else {
 						if(memcmp(&hdr->dest.addr, pos+4, 4) != 0){
-							return false;
+							return -1;
 						}
 						count += 32;
 					}
@@ -1175,16 +1179,16 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
 					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=6){
-						return false;
+						return -1;
 					}
 					struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
 					if(memcmp(&tcphdr->src, pos+4, 2) != 0){
-						return false;
+						return -1;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return false; // TODO
+					return -1; // TODO
 				}else{
-					return false;
+					return -1;
 				}
 				break;
 				
@@ -1192,16 +1196,16 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
 					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=6){
-						return false;
+						return -1;
 					}
 					struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
 					if(memcmp(&tcphdr->dest, pos+4, 2) != 0){
-						return false;
+						return -1;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return false; // TODO
+					return -1; // TODO
 				}else{
-					return false;
+					return -1;
 				}
 				break;
 				
@@ -1209,16 +1213,16 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
 					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=6){
-						return false;
+						return -1;
 					}
 					struct tcp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
 					if(memcmp(&udphdr->src, pos+4, 2) != 0){
-						return false;
+						return -1;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return false; // TODO
+					return -1; // TODO
 				}else{
-					return false;
+					return -1;
 				}
 				break;
 				
@@ -1226,16 +1230,16 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
 					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=6){
-						return false;
+						return -1;
 					}
 					struct tcp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
 					if(memcmp(&udphdr->dest, pos+4, 2) != 0){
-						return false;
+						return -1;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return false; // TODO
+					return -1; // TODO
 				}else{
-					return false;
+					return -1;
 				}
 				break;
 				
@@ -1244,30 +1248,30 @@ bool match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_o
 				
 				case OFPXMT13_OFB_ICMPV4_TYPE:
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)!=0){
-					return false;
+					return -1;
 				}else{
 					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=1){
-						return false;
+						return -1;
 					}
 					const uint8_t *hdr = (void*)(packet->data + oob->eth_type_offset + IPH_HL(iphdr) * 4);
 					if(hdr[0] != pos[4]){
-						return false;
+						return -1;
 					}
 				}
 				break;
 				
 				case OFPXMT13_OFB_ICMPV4_CODE:
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)!=0){
-					return false;
+					return -1;
 				}else{
 					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(IPH_PROTO(iphdr)!=1){
-						return false;
+						return -1;
 					}
 					const uint8_t *hdr = (void*)(packet->data + oob->eth_type_offset + IPH_HL(iphdr) * 4);
 					if(hdr[1] != pos[4]){
-						return false;
+						return -1;
 					}
 				}
 				break;
