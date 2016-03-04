@@ -471,8 +471,13 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 					memcpy(&hint, self->mp_in, 40);
 				}
 				memcpy(unit, self->mp_in, offsetof(struct ofp13_flow_stats_request, match) + ALIGN8(ntohs(hint.match.length)));
+				
+				uint16_t capacity = ofp_tx_room(self);
+				if(capacity > OFP_BUFFER_LEN){
+					capacity = OFP_BUFFER_LEN;
+				}
 				uint16_t unitlength = fill_ofp13_flow_stats(unit,
-					&self->mp_out_index, ofp_buffer+16, ofp_tx_room(self)-16);
+					&self->mp_out_index, ofp_buffer+16, capacity-16);
 				mpres.flags = htons(OFPMPF13_REPLY_MORE);
 				if(self->mp_out_index < 0){
 					mpres.flags = 0;
@@ -501,8 +506,13 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 					memcpy(&hint, self->mp_in, 40);
 				}
 				memcpy(unit, self->mp_in, offsetof(struct ofp13_aggregate_stats_request, match) + ALIGN8(ntohs(hint.match.length)));
+				
+				uint16_t capacity = ofp_tx_room(self);
+				if(capacity > OFP_BUFFER_LEN){
+					capacity = OFP_BUFFER_LEN;
+				}
 				uint16_t unitlength = fill_ofp13_aggregate_stats(unit,
-					&self->mp_out_index, ofp_buffer+16, ofp_tx_room(self)-16);
+					&self->mp_out_index, ofp_buffer+16, capacity-16);
 				if(unitlength == 0){
 					return OFP_NOOP;
 				}
@@ -523,8 +533,12 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 				if(self->mp_out_index < 0){
 					self->mp_out_index = 0;
 				}
+				uint16_t capacity = ofp_tx_room(self);
+				if(capacity > OFP_BUFFER_LEN){
+					capacity = OFP_BUFFER_LEN;
+				}
 				uint16_t unitlength = fill_ofp13_table_stats(
-					&self->mp_out_index, ofp_buffer+16, ofp_tx_room(self)-16);
+					&self->mp_out_index, ofp_buffer+16, capacity-16);
 				if(unitlength==0){
 					return OFP_NOOP;
 				}
@@ -553,8 +567,12 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 				
 				uint32_t port_no = ntohl(hint.port_no);
 				if(port_no <= OFPP13_MAX || port_no == OFPP13_ANY){
+					uint16_t capacity = ofp_tx_room(self);
+					if(capacity > OFP_BUFFER_LEN){
+						capacity = OFP_BUFFER_LEN;
+					}
 					uint16_t unitlength = fill_ofp13_port_stats(hint.port_no,
-						&self->mp_out_index, ofp_buffer+16, ofp_tx_room(self)-16);
+						&self->mp_out_index, ofp_buffer+16, capacity-16);
 					mpres.flags = 0;
 					if(self->mp_out_index >= 0){
 						mpres.flags = htons(OFPMPF13_REPLY_MORE);
@@ -1676,15 +1694,14 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 						}
 					}
 				}
-			}
+			} // xxx: OFPP13_TABLE
 		}
 		break;
 		
 		case OFPAT13_SET_FIELD:
 		{
-			struct ofp13_action_set_field as;
-			memcpy(&as, action, sizeof(as));
-			set_field(packet, oob, as.field);
+			uintptr_t field = (uintptr_t)action + offsetof(struct ofp13_action_set_field, field);
+			set_field(packet, oob, (void*)field);
 		}
 		break;
 	}
