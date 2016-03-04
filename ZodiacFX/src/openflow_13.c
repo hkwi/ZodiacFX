@@ -1503,19 +1503,17 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 				
 				case OFPXMT13_OFB_METADATA:
 				{
-					union {
-						uint64_t raw;
-						char b[8];
-					} value = { .raw = packet->metadata };
+					uint8_t b[8];
+					memcpy(b, &packet->metadata, 8);
 					if(has_mask){
 						for(int i=0; i<8; i++){
-							if(value.b[i] & pos[12+i] != pos[4+i]){
+							if((b[i] & pos[12+i]) != pos[4+i]){
 								return -1;
 							}
 						}
 						count += bits_on(pos+12, 8);
 					} else {
-						if(memcmp(value.b, pos+4, 8) != 0){
+						if(memcmp(b, pos+4, 8) != 0){
 							return -1;
 						}
 						count += 64;
@@ -1631,12 +1629,10 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 				}else{
 					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(has_mask){
-						union {
-							uint32_t raw;
-							uint8_t b[4];
-						} value = { .raw=hdr->src.addr };
+						uint8_t b[4];
+						memcpy(b, &hdr->src.addr, 4);
 						for(int i=0; i<4; i++){
-							if(value.b[i] & pos[8+i] != pos[4+i]){
+							if((b[i] & pos[8+i]) != pos[4+i]){
 								return -1;
 							}
 						}
@@ -1656,12 +1652,10 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 				}else{
 					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 					if(has_mask){
-						union {
-							uint32_t raw;
-							uint8_t b[4];
-						} value = { .raw=hdr->dest.addr };
+						uint8_t b[4];
+						memcpy(b, &hdr->dest.addr, 4);
 						for(int i=0; i<4; i++){
-							if(value.b[i] & pos[8+i] != pos[4+i]){
+							if((b[i] & pos[8+i]) != pos[4+i]){
 								return -1;
 							}
 						}
@@ -1772,6 +1766,26 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 					const uint8_t *hdr = (void*)(packet->data + oob->eth_type_offset + IPH_HL(iphdr) * 4);
 					if(hdr[1] != pos[4]){
 						return -1;
+					}
+				}
+				break;
+
+				case OFPXMT13_OFB_TUNNEL_ID:
+				{
+					uint8_t b[8];
+					memcpy(b, &packet->tunnel_id, 8);
+					if(has_mask){
+						for(int i=0; i<8; i++){
+							if((b[i] & pos[12+i]) != pos[4+i]){
+								return -1;
+							}
+						}
+						count += bits_on(pos+12, 8);
+					} else {
+						if(memcmp(b, pos+4, 8) != 0){
+							return -1;
+						}
+						count += 64;
 					}
 				}
 				break;
@@ -1922,7 +1936,29 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 			data[15] = o[5];
 			memcpy(oob->vlan, data+14, 2);
 		}
+		break;
 		
+		case OXM_OF_VLAN_VID_W:
+		if((oob->vlan[0] & 0x10) != 0){
+			data[14] = (data[14] & ~o[6]) | o[4];
+			data[15] = (data[15] & ~o[7]) | o[5];
+			memcpy(oob->vlan, data+14, 2);
+		}
+		break;
+		
+		case OXM_OF_TUNNEL_ID:
+		memcpy(&packet->tunnel_id, o+4, 8);
+		break;
+		
+		case OXM_OF_TUNNEL_ID_W:
+		{
+			uint64_t v, m;
+			memcpy(&v, o+4, 8);
+			memcpy(&m, o+12, 8);
+			packet->tunnel_id &= ~m;
+			packet->tunnel_id |= v & m;
+		}
+		break;
 		// TODO: implement more
 		
 		// OXM_OF_IPV6_EXTDR not valid by spec.
