@@ -78,6 +78,12 @@ struct fx_flow_count fx_flow_counts[MAX_FLOWS] = {0};
 
 struct fx_meter_band fx_meter_bands[MAX_METER_BANDS] = {0}; // excluding slowpath, controller
 
+int iLastGroup = 0;
+struct fx_group fx_groups[MAX_GROUPS] = {0};
+struct fx_group_count fx_group_counts[MAX_GROUPS] = {0};
+struct fx_group_bucket fx_group_buckets[MAX_GROUP_BUCKETS] = {0};
+struct fx_group_bucket_count fx_group_bucket_counts[MAX_GROUP_BUCKETS] = {0};
+
 static void cleanup_fx_flows(void){
 	int found;
 	do{
@@ -660,6 +666,7 @@ static void update_fx_ports(void){
 				}
 			}
 		}
+		// xxx: add watch_port, watch_group, fx_group.live sync.
 		if(OF_Version == 4){
 			send_ofp13_port_status();
 		}else{
@@ -669,6 +676,9 @@ static void update_fx_ports(void){
 }
 
 void openflow_init(){
+	for(int i=0; i<MAX_GROUP_BUCKETS; i++){
+		fx_group_buckets[i].group_id = ntohl(OFPG13_ANY);
+	}
 	IP4_ADDR(&controllers[0].addr,
 		Zodiac_Config.OFIP_address[0],
 		Zodiac_Config.OFIP_address[1],

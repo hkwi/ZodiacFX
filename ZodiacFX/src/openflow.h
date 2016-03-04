@@ -187,10 +187,10 @@ struct fx_meter_band {
 #define MAX_METERS 0
 #define MAX_METER_BANDS 0
 
-// in host byte order
 struct fx_group {
 	uint32_t group_id; // in network byte order
 	uint8_t type;
+	bool live;
 };
 // in host byte order
 struct fx_group_bucket {
@@ -201,8 +201,18 @@ struct fx_group_bucket {
 	uint16_t actions_len;
 	void *actions;
 };
-#define MAX_GROUPS 0
-#define MAX_GROUP_BUCKETS 0
+// in host byte order
+struct fx_group_count {
+	uint64_t packet_count;
+	uint64_t byte_count;
+	uint64_t init;
+};
+struct fx_group_bucket_count {
+	uint64_t packet_count;
+	uint64_t byte_count;
+};
+#define MAX_GROUPS 8
+#define MAX_GROUP_BUCKETS 32
 
 bool switch_negotiated(void);
 void openflow_init(void);

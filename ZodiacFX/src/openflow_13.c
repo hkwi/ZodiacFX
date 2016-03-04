@@ -47,6 +47,7 @@
 extern struct zodiac_config Zodiac_Config;
 extern int OF_Version;
 extern int iLastFlow;
+extern int iLastGroup;
 
 /*
 *	Converts a 64bit value from host to network format
@@ -71,6 +72,10 @@ extern struct fx_packet_in fx_packet_ins[MAX_BUFFERS];
 extern struct fx_switch_config fx_switch;
 extern struct fx_port fx_ports[MAX_PORTS];
 extern struct fx_port_count fx_port_counts[MAX_PORTS];
+extern struct fx_group fx_groups[MAX_GROUPS];
+extern struct fx_group_count fx_group_counts[MAX_GROUPS];
+extern struct fx_group_bucket fx_group_buckets[MAX_GROUP_BUCKETS];
+extern struct fx_group_bucket_count fx_group_bucket_counts[MAX_GROUP_BUCKETS];
 extern struct fx_meter_band fx_meter_bands[MAX_METER_BANDS];
 
 // fields are in host byte order
@@ -389,6 +394,131 @@ static uint16_t fill_ofp13_port_desc(int *mp_index, void *buffer, uint16_t capac
 	return length;
 }
 
+static uint32_t sum_group_refcount(uint32_t group_id){
+	uint32_t count = 0;
+	for(int i=0; i<iLastGroup; i++){
+		uint32_t g = fx_groups[i].group_id;
+		for(int j=0; j<MAX_GROUP_BUCKETS; j++){
+			if(fx_group_buckets[j].group_id == g){
+				uintptr_t pos = (uintptr_t)fx_group_buckets[j].actions;
+				while(pos < (uintptr_t)fx_group_buckets[j].actions + fx_group_buckets[j].actions_len){
+					struct ofp13_action_header hdr;
+					memcpy(&hdr, pos, sizeof(hdr));
+					if(hdr.type == htons(OFPAT13_GROUP)){
+						struct ofp13_action_group ag;
+						memcpy(&ag, pos, sizeof(ag));
+						if(ag.group_id == group_id){
+							count++;
+						}
+					}
+					pos += ntohs(hdr.len);
+				}
+			}
+		}
+	}
+	for(int i=0; i<iLastFlow; i++){
+		uintptr_t pos = (uintptr_t)fx_flows[i].ops;
+		while(pos < (uintptr_t)fx_flows[i].ops + fx_flows[i].ops_length){
+			struct ofp13_instruction hdr;
+			memcpy(&hdr, pos, sizeof(hdr));
+			if(hdr.type == htons(OFPIT13_APPLY_ACTIONS) || hdr.type == htons(OFPIT13_WRITE_ACTIONS)){
+				uintptr_t acts = pos + offsetof(struct ofp13_instruction_actions, actions);
+				while(acts < pos + ntohs(hdr.len)){
+					struct ofp13_action_header act;
+					memcpy(&act, pos, sizeof(act));
+					if(act.type == htons(OFPAT13_GROUP)){
+						struct ofp13_action_group ag;
+						memcpy(&ag, pos, sizeof(ag));
+						if(ag.group_id == group_id){
+							count++;
+						}
+					}
+					acts += ntohs(act.len);
+				}
+			}
+			pos += ntohs(hdr.len);
+		}
+	}
+	return count;
+}
+
+static uint16_t fill_ofp13_group_stats(uint32_t group_id, int *mp_index, void *buffer, uint16_t capacity){
+	uint16_t length = 0;
+	for(int i=*mp_index; i<iLastGroup; i++){
+		*mp_index = i;
+		if(group_id==fx_groups[i].group_id || group_id==htonl(OFPGT13_ALL)){
+			uint64_t now = sys_get_ms64();
+			struct ofp13_group_stats s = {
+				.group_id = group_id,
+				.duration_sec = htonl((now - fx_group_counts[i].init)/1000u),
+				.duration_nsec = htonl((now - fx_group_counts[i].init)%1000u*1000000u),
+				.packet_count = htonll(fx_group_counts[i].packet_count),
+				.byte_count = htonll(fx_group_counts[i].byte_count),
+				.ref_count = htonl(sum_group_refcount(group_id)),
+			};
+			bool oom = false;
+			uint16_t len = sizeof(s);
+			for(int j=0; j<MAX_GROUP_BUCKETS; j++){
+				if(fx_group_buckets[j].group_id == fx_groups[i].group_id){
+					if(length + len + 16 < capacity){
+						struct ofp13_bucket_counter c = {
+							.byte_count = htonll(fx_group_bucket_counts[j].byte_count),
+							.packet_count = htonll(fx_group_bucket_counts[j].packet_count),
+						};
+						memcpy((void*)((uintptr_t)buffer+length+len), &c, sizeof(c));
+						len += 16;
+					}else{
+						oom = true;
+					}
+				}
+			}
+			if(oom){
+				return length;
+			}
+			s.length = htons(len);
+			memcpy((void*)((uintptr_t)buffer + length), &s, sizeof(s));
+			length += len;
+		}
+	}
+	*mp_index = -1;
+	return length;
+}
+
+static uint16_t fill_ofp13_group_desc(int *mpindex, void* buffer, uint16_t capacity){
+	uint16_t length = 0;
+	for(int i=*mpindex; i<iLastGroup; i++){
+		*mpindex = i;
+		struct ofp13_group_desc desc = {
+			.group_id = fx_groups[i].group_id,
+			.type = fx_groups[i].type,
+		};
+		uint16_t len = sizeof(desc);
+		for(int j=0; j<MAX_GROUP_BUCKETS; j++){
+			if(fx_group_buckets[j].group_id == fx_groups[i].group_id){
+				struct ofp13_bucket b = {
+					.len = htons(16 + fx_group_buckets[j].actions_len),
+					.weight = fx_group_buckets[j].weight,
+					.watch_port = fx_group_buckets[j].watch_port,
+					.watch_group = fx_group_buckets[j].watch_group,
+				};
+				if(length+len+sizeof(b)+fx_group_buckets[j].actions_len < capacity){
+					memcpy((void*)((uintptr_t)buffer+length+len), &b, sizeof(b));
+					memcpy((void*)((uintptr_t)buffer+length+len+sizeof(b)),
+						fx_group_buckets[j].actions, fx_group_buckets[j].actions_len);
+					len += sizeof(b) + fx_group_buckets[j].actions_len;
+				}else{
+					return length;
+				}
+			}
+		}
+		desc.length = htons(len);
+		memcpy((void*)((uintptr_t)buffer+length), &desc, sizeof(desc));
+		length += len;
+	}
+	*mpindex = -1;
+	return length;
+}
+
 static enum ofp_pcb_status ofp13_write_mp_error(struct ofp_pcb *self, uint16_t ofpet, uint16_t ofpec){
 	struct ofp13_multipart_request mpreq;
 	memcpy(&mpreq, self->mpreq_hdr, 16);
@@ -583,6 +713,65 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 				} else {
 					return ofp13_write_mp_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_PORT);
 				}
+			}
+			break;
+			
+			case OFPMP13_GROUP:
+			if(ofp_rx_length(self)<8 || ofp_tx_room(self)<56){
+				return OFP_NOOP;
+			}else{
+				if(self->mp_out_index < 0){
+					self->mp_out_index = 0;
+				}
+				if(length != 16+8){
+					return ofp13_write_mp_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_LEN);
+				}
+				struct ofp13_group_stats_request hint;
+				self->mpreq_pos += ofp_rx_read(self, &hint, 8);
+				
+				if(ntohl(hint.group_id) <= OFPG13_MAX || hint.group_id == htonl(OFPG13_ALL)){
+					uint16_t capacity = ofp_tx_room(self);
+					if(capacity > OFP_BUFFER_LEN){
+						capacity = OFP_BUFFER_LEN;
+					}
+					uint16_t unitlength = fill_ofp13_group_stats(hint.group_id,
+						&self->mp_out_index, ofp_buffer+16, capacity-16);
+					mpres.flags = 0;
+					if(self->mp_out_index >= 0){
+						mpres.flags = htons(OFPMPF13_REPLY_MORE);
+					}
+					mpres.header.length = htons(16+unitlength);
+					memcpy(ofp_buffer, &mpres, 16);
+					ofp_tx_write(self, ofp_buffer, 16+unitlength);
+				}else{
+					return ofp13_write_mp_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_UNKNOWN_GROUP);
+				}
+			}
+			break;
+
+			case OFPMP13_GROUP_DESC:
+			if(ofp_tx_room(self)<8){
+				return OFP_NOOP;
+			}else if(length > 16){
+				return ofp13_write_mp_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_LEN);
+			}else{
+				if(self->mp_out_index < 0){
+					self->mp_out_index = 0;
+				}
+				uint16_t capacity = ofp_tx_room(self);
+				if(capacity > OFP_BUFFER_LEN){
+					capacity = OFP_BUFFER_LEN;
+				}
+				
+				uint16_t unitlength = fill_ofp13_group_desc(
+					&self->mp_out_index, ofp_buffer+16, capacity-16);
+				mpres.flags = 0;
+				if(self->mp_out_index >= 0){
+					mpres.flags = htons(OFPMPF13_REPLY_MORE);
+				}
+				mpres.header.length = htons(16+unitlength);
+				memcpy(ofp_buffer, &mpres, 16);
+				ofp_tx_write(self, ofp_buffer, 16+unitlength);
 			}
 			break;
 			
@@ -970,16 +1159,309 @@ static enum ofp_pcb_status mod_ofp13_meter(struct ofp_pcb *self){
 	}
 }
 
-static uint16_t mod_ofp13_group(const void *cmsg){
-	struct ofp13_group_mod req;
-	memcpy(&req, cmsg, sizeof(struct ofp13_group_mod));
+static uint16_t add_ofp13_group(struct ofp_pcb *self){
+	struct ofp13_group_mod hint;
+	pbuf_copy_partial(self->rbuf, &hint, sizeof(hint), self->rskip);
 	
-	uint32_t group_id = ntohl(req.group_id);
-	if(group_id > OFPG13_MAX){
-		
+	if(ntohl(hint.group_id) > OFPG13_MAX){
+		return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_INVALID_GROUP);
 	}
-	// TODO: implement this
+	if(iLastGroup == MAX_GROUPS){
+		return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_OUT_OF_GROUPS);
+	}
+	uint16_t pos;
+	
+	int bucket_count = 0;
+	int actions_list_count = 0;
+	pos = offsetof(struct ofp13_group_mod, buckets);
+	while(pos < ntohs(hint.header.length)){
+		struct ofp13_bucket b;
+		pbuf_copy_partial(self->rbuf, &b, sizeof(b), self->rskip+pos);
+		if(b.watch_group == hint.group_id){
+			return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_LOOP);
+		}
+		uint16_t actions_len = ntohs(b.len) - sizeof(b);
+		if(actions_len > 0){
+			actions_list_count++;
+		}
+		bucket_count++;
+		pos += ntohs(b.len);
+	}
+	// prepare bucket space
+	int bucket_space = 0;
+	for(int i=0; i<MAX_GROUP_BUCKETS; i++){
+		if(fx_group_buckets[i].group_id == htonl(OFPG13_ANY)){
+			bucket_space++;
+		}
+	}
+	if(bucket_space < bucket_count){
+		return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_OUT_OF_BUCKETS);
+	}
+	
+	void **actions_list = malloc(sizeof(void*) * actions_list_count);
+	if(actions_list == NULL){
+		return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_EPERM);
+	}
+	// prepare bucket action space
+	int i = 0;
+	pos = offsetof(struct ofp13_group_mod, buckets);
+	while(pos < ntohs(hint.header.length)){
+		struct ofp13_bucket b;
+		pbuf_copy_partial(self->rbuf, &b, sizeof(b), self->rskip+pos);
+		uint16_t actions_len = ntohs(b.len) - sizeof(b);
+		if(actions_len > 0){
+			void *acts = malloc(actions_len);
+			if(acts == NULL){
+				for(int j=0; j<i; j++){
+					free(actions_list[j]);
+				}
+				free(actions_list);
+				return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_EPERM);
+			}
+			pbuf_copy_partial(self->rbuf, acts, actions_len,
+				self->rskip + pos + offsetof(struct ofp13_bucket, actions));
+			actions_list[i] = acts;
+			i++;
+		}
+		pos += ntohs(b.len);
+	}
+	// apply
+	fx_group_counts[iLastGroup].init = sys_get_ms64();
+	fx_groups[iLastGroup].group_id = hint.group_id;
+	fx_groups[iLastGroup].type = hint.type;
+	iLastGroup++;
+	
+	int bucket_pos = 0;
+	int act_pos = 0;
+	pos = offsetof(struct ofp13_group_mod, buckets);
+	while(pos < ntohs(hint.header.length)){
+		struct ofp13_bucket b;
+		pbuf_copy_partial(self->rbuf, &b, sizeof(b), self->rskip+pos);
+		for(int i=bucket_pos; i<MAX_GROUP_BUCKETS; i++){
+			if(fx_group_buckets[i].group_id == htonl(OFPG13_ANY)){
+				fx_group_buckets[i].group_id = hint.group_id;
+				fx_group_buckets[i].weight = b.weight;
+				fx_group_buckets[i].watch_port = b.watch_port;
+				fx_group_buckets[i].watch_group = b.watch_group;
+				
+				uint16_t actions_len = ntohs(b.len) - sizeof(b);
+				fx_group_buckets[i].actions_len = actions_len;
+				if(actions_len > 0){
+					fx_group_buckets[i].actions = actions_list[act_pos];
+					act_pos++;
+				}else{
+					fx_group_buckets[i].actions = NULL;
+				}
+				
+				fx_group_bucket_counts[i].packet_count = 0;
+				fx_group_bucket_counts[i].byte_count = 0;
+				
+				bucket_pos = i+1;
+				break;
+			}
+		}
+		pos += ntohs(b.len);
+	}
+	free(actions_list);
 	return 0;
+}
+
+static uint16_t modify_ofp13_group(struct ofp_pcb *self){
+	struct ofp13_group_mod hint;
+	pbuf_copy_partial(self->rbuf, &hint, sizeof(hint), self->rskip);
+	
+	if(ntohl(hint.group_id) > OFPG13_MAX){
+		return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_INVALID_GROUP);
+	}
+	int group_idx = -1;
+	for(int i=0; i<iLastGroup; i++){
+		if(fx_groups[i].group_id == hint.group_id){
+			group_idx = i;
+			break;
+		}
+	}
+	if(group_idx < 0){
+		return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_INVALID_GROUP);
+	}
+	uint16_t pos;
+	
+	int bucket_count = 0;
+	int actions_list_count = 0;
+	pos = offsetof(struct ofp13_group_mod, buckets);
+	while(pos < ntohs(hint.header.length)){
+		struct ofp13_bucket b;
+		pbuf_copy_partial(self->rbuf, &b, sizeof(b), self->rskip+pos);
+		if(b.watch_group == hint.group_id){
+			return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_LOOP);
+		}
+		uint16_t actions_len = ntohs(b.len) - sizeof(b);
+		if(actions_len > 0){
+			actions_list_count++;
+		}
+		bucket_count++;
+		pos += ntohs(b.len);
+	}
+	// prepare bucket space
+	int bucket_space = 0;
+	for(int i=0; i<MAX_GROUP_BUCKETS; i++){
+		if(fx_group_buckets[i].group_id == htonl(OFPG13_ANY) || fx_group_buckets[i].group_id == hint.group_id){
+			bucket_space++;
+		}
+	}
+	if(bucket_space < bucket_count){
+		return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_OUT_OF_BUCKETS);
+	}
+	
+	void **actions_list = malloc(sizeof(void*) * actions_list_count);
+	if(actions_list == NULL){
+		return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_EPERM);
+	}
+	// prepare bucket action space
+	int i = 0;
+	pos = offsetof(struct ofp13_group_mod, buckets);
+	while(pos < ntohs(hint.header.length)){
+		struct ofp13_bucket b;
+		pbuf_copy_partial(self->rbuf, &b, sizeof(b), self->rskip+pos);
+		uint16_t actions_len = ntohs(b.len) - sizeof(b);
+		if(actions_len > 0){
+			void *acts = malloc(actions_len);
+			if(acts == NULL){
+				for(int j=0; j<i; j++){
+					free(actions_list[j]);
+				}
+				free(actions_list);
+				return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_EPERM);
+			}
+			pbuf_copy_partial(self->rbuf, acts, actions_len,
+			self->rskip + pos + offsetof(struct ofp13_bucket, actions));
+			actions_list[i] = acts;
+			i++;
+		}
+		pos += ntohs(b.len);
+	}
+	
+	// apply
+	fx_groups[group_idx].type = hint.type;
+
+	for(int i=0; i<MAX_GROUP_BUCKETS; i++){ // clear
+		if(fx_group_buckets[i].group_id == hint.group_id){
+			if(fx_group_buckets[i].actions != NULL){
+				free(fx_group_buckets[i].actions);
+			}
+			memset(fx_group_buckets+i, 0, sizeof(struct fx_group));
+			fx_group_buckets[i].group_id = htonl(OFPG13_ANY);
+		}
+	}
+	
+	int bucket_pos = 0;
+	int act_pos = 0;
+	pos = offsetof(struct ofp13_group_mod, buckets);
+	while(pos < ntohs(hint.header.length)){
+		struct ofp13_bucket b;
+		pbuf_copy_partial(self->rbuf, &b, sizeof(b), self->rskip+pos);
+		for(int i=bucket_pos; i<MAX_GROUP_BUCKETS; i++){
+			if(fx_group_buckets[i].group_id != htonl(OFPG13_ANY)){
+				fx_group_buckets[i].group_id = hint.group_id;
+				fx_group_buckets[i].weight = b.weight;
+				fx_group_buckets[i].watch_port = b.watch_port;
+				fx_group_buckets[i].watch_group = b.watch_group;
+				
+				uint16_t actions_len = ntohs(b.len) - sizeof(b);
+				fx_group_buckets[i].actions_len = actions_len;
+				if(actions_len > 0){
+					fx_group_buckets[i].actions = actions_list[act_pos];
+					act_pos++;
+					}else{
+					fx_group_buckets[i].actions = NULL;
+				}
+				
+				fx_group_bucket_counts[i].packet_count = 0;
+				fx_group_bucket_counts[i].byte_count = 0;
+				
+				bucket_pos = i+1;
+				break;
+			}
+		}
+		pos += ntohs(b.len);
+	}
+	free(actions_list);
+	return 0;
+}
+
+static uint16_t delete_ofp13_group(struct ofp_pcb *self){
+	struct ofp13_group_mod hint;
+	pbuf_copy_partial(self->rbuf, &hint, sizeof(hint), self->rskip);
+	
+	uint32_t group_id = ntohl(hint.group_id);
+	if(group_id <= OFPG13_MAX){
+		int found = -1;
+		for(int i=0; i<iLastGroup; i++){
+			if(fx_groups[i].group_id == hint.group_id){
+				found = i;
+			}
+		}
+		if(found < 0){
+			return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_INVALID_GROUP);
+		}
+		for(int i=0; i<MAX_GROUP_BUCKETS; i++){
+			if(fx_group_buckets[i].group_id == hint.group_id){
+				if(fx_group_buckets[i].actions != NULL){
+					free(fx_group_buckets[i].actions);
+					fx_group_buckets[i].actions = NULL;
+				}
+				fx_group_buckets[i].group_id = OFPG13_ANY;
+				
+				fx_group_bucket_counts[i].packet_count = 0;
+				fx_group_bucket_counts[i].byte_count = 0;
+			}
+		}
+		
+		iLastGroup--;
+		if(found < iLastGroup){
+			fx_groups[found] = fx_groups[iLastGroup];
+			fx_group_counts[found] = fx_group_counts[iLastGroup];
+			
+			memset(fx_group_counts+iLastGroup, 0, sizeof(struct fx_group_count));
+		}else{
+			memset(fx_group_counts+found, 0, sizeof(struct fx_group_count));
+		}
+	}else if(group_id == OFPG13_ALL){
+		for(int i=0; i<MAX_GROUP_BUCKETS; i++){
+			if(fx_group_buckets[i].actions != NULL){
+				free(fx_group_buckets[i].actions);
+				fx_group_buckets[i].actions = NULL;
+			}
+			fx_group_buckets[i].group_id = htonl(OFPG13_ANY);
+
+			fx_group_bucket_counts[i].packet_count = 0;
+			fx_group_bucket_counts[i].byte_count = 0;
+		}
+		for(int i=0; i<MAX_GROUPS; i++){
+			fx_group_counts[i].packet_count = 0;
+			fx_group_counts[i].byte_count = 0;
+			fx_group_counts[i].init = 0;
+		}
+		iLastGroup = 0;
+	}else{
+		return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_INVALID_GROUP);
+	}
+	return 0;
+}
+
+static uint16_t mod_ofp13_group(struct ofp_pcb *self){
+	struct ofp13_group_mod hint;
+	pbuf_copy_partial(self->rbuf, &hint, sizeof(hint), self->rskip);
+	
+	switch(ntohs(hint.command)){
+		case OFPGC13_ADD:
+			return add_ofp13_group(self);
+		case OFPGC13_MODIFY:
+			return modify_ofp13_group(self);
+		case OFPGC13_DELETE:
+			return delete_ofp13_group(self);
+		default:
+			return ofp_write_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_BAD_COMMAND);
+	}
 }
 
 static int bits_on(const uint8_t *data, int len){
@@ -1556,7 +2038,7 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 						}
 					}
 				}
-			}
+			} // xxx: OFPP13_TABLE
 		}
 		break;
 		
@@ -1597,6 +2079,121 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 			memmove(data+12, data+16, packet->length-16);
 			packet->length -= 4;
 			sync_oob(packet, oob);
+		}
+		break;
+		
+		case OFPAT13_GROUP:
+		{
+			void *data = malloc(packet->length);
+			if(data == NULL){
+				return false;
+			}
+			memcpy(data, packet->data, packet->length);
+			struct fx_packet gpacket = {
+				.data = data,
+				.length = packet->length,
+				.capacity = packet->length,
+				.malloced = true,
+				.in_port = packet->in_port,
+				.in_phy_port = packet->in_phy_port,
+				.metadata = packet->metadata,
+				.tunnel_id = packet->tunnel_id,
+			};
+			struct fx_packet_oob goob = {
+				.action_set = {0},
+				.action_set_oxm = NULL,
+				.action_set_oxm_length = 0,
+			};
+			sync_oob(&gpacket, &goob);
+			
+			struct ofp13_action_group ag;
+			memcpy(&ag, action, sizeof(ag));
+			for(int i=0; i<iLastGroup; i++){
+				if(fx_groups[i].group_id == ag.group_id){
+					fx_group_counts[i].byte_count += packet->length;
+					fx_group_counts[i].packet_count++;
+					
+					switch(fx_groups[i].type){
+						case OFPGT13_ALL:
+						for(int i=0; i<MAX_GROUP_BUCKETS; i++){
+							if(fx_group_buckets[i].group_id == ag.group_id){
+								fx_group_bucket_counts[i].packet_count++;
+								fx_group_bucket_counts[i].byte_count += gpacket.length;
+								
+								uintptr_t pos = (uintptr_t)fx_group_buckets[i].actions;
+								while(pos < (uintptr_t)fx_group_buckets[i].actions + fx_group_buckets[i].actions_len){
+									struct ofp13_action_header hdr;
+									memcpy(&hdr, pos, sizeof(hdr));
+									if(execute_ofp13_action(&gpacket, &goob, (void*)pos, flow) == false){
+										if(gpacket.data != data && gpacket.malloced){
+											free(gpacket.data);
+										}
+										free(data);
+										return false;
+									}
+									pos += ntohs(hdr.len);
+								}
+								// cleanup gpacket
+								if(gpacket.data != data && gpacket.malloced){
+									free(gpacket.data);
+								}
+								// reset gpacket
+								memcpy(data, packet->data, packet->length);
+								gpacket.data = data;
+								gpacket.length = packet->length;
+								gpacket.capacity = packet->length;
+								gpacket.malloced = true;
+								gpacket.in_port = packet->in_port;
+								gpacket.in_phy_port = packet->in_phy_port;
+								gpacket.metadata = packet->metadata;
+								gpacket.tunnel_id = packet->tunnel_id;
+								sync_oob(&gpacket, &goob);
+							}
+						}
+						break;
+						
+						case OFPGT13_SELECT:
+						{
+							// xxx: need packet hashing
+						}
+						break;
+						
+						case OFPGT13_INDIRECT:
+						for(int i=0; i<MAX_GROUP_BUCKETS; i++){
+							if(fx_group_buckets[i].group_id == ag.group_id){
+								fx_group_bucket_counts[i].packet_count++;
+								fx_group_bucket_counts[i].byte_count += gpacket.length;
+								
+								uintptr_t pos = (uintptr_t)fx_group_buckets[i].actions;
+								while(pos < (uintptr_t)fx_group_buckets[i].actions + fx_group_buckets[i].actions_len){
+									struct ofp13_action_header hdr;
+									memcpy(&hdr, pos, sizeof(hdr));
+									if(execute_ofp13_action(&gpacket, &goob, (void*)pos, flow) == false){
+										if(gpacket.data != data && gpacket.malloced){
+											free(gpacket.data);
+										}
+										free(data);
+										return false;
+									}
+									pos += ntohs(hdr.len);
+								}
+								if(gpacket.data != data && gpacket.malloced){
+									free(gpacket.data);
+								}
+								break;
+							}
+						}
+						break;
+						
+						case OFPGT13_FF:
+						{
+							// xxx:
+						}
+						break;
+					}
+				}
+			}
+			free(data);
 		}
 		break;
 		
@@ -1694,7 +2291,7 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 						}
 					}
 				}
-			} // xxx: OFPP13_TABLE
+			}
 		}
 		break;
 		
