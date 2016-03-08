@@ -530,9 +530,14 @@ static err_t ofp_recv_cb(void *arg, struct tcp_pcb *tcp, struct pbuf *p, err_t e
 	ofp->alive_until = sys_get_ms() + OFP_TIMEOUT;
 	
 	err_t ret = ERR_OK;
-	if(0xffff - ofp->rbuf->tot_len < p->tot_len){
-		// we can't chain anyway, because of tot_len field overflow
-		// just tell tcp stack buffer full.
+	if(ofp->rbuf != NULL && RECV_BUFLEN - ofp->rbuf->tot_len < p->tot_len){
+		// if there're big RAM, we could buffer up to openflow spec max 
+		// length of 0xffff (64K).
+		// We limit the message length to RECV_BUFLEN here:
+		// * available 128K on CPU
+		// * KSZ8795C can pass frame length up to 2K
+		// 
+		// If we're going to tune RECV_BUFLEN, see also MEM_SIZE
 		ret = ERR_MEM;
 	} else {
 		// there are very limited number of POOL mem,
