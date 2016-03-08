@@ -35,6 +35,7 @@
 #include "of_helper.h"
 #include "lwip/tcp.h"
 #include "ipv4/lwip/ip.h"
+#include "ipv4/lwip/icmp.h"
 #include "ipv4/lwip/inet_chksum.h"
 #include "ipv4/lwip/ip_addr.h"
 #include "lwip/tcp_impl.h"
@@ -50,6 +51,13 @@ extern int OF_Version;
 static inline uint64_t (htonll)(uint64_t n)
 {
 	return htonl(1) == 1 ? n : ((uint64_t) htonl(n) << 32) | htonl(n >> 32);
+}
+
+uint32_t packet_hash(const void *data, uint16_t length){
+	uint32_t L[12] = {0};
+	if(length > 48){ length=48; }
+	memcpy(L, data, length);
+	return L[0]^L[1]^L[2]^L[3]^L[4]^L[5]^L[6]^L[7]^L[8]^L[9]^L[10]^L[11];
 }
 
 /*
@@ -86,6 +94,11 @@ void set_ip_checksum(void *p_uc_data, uint16_t packet_size, uint16_t iphdr_offse
 		udphdr->chksum = inet_chksum_pseudo(p, &src, &dst,
 			IP_PROTO_UDP,
 			packet_size - payload_offset);
+	}
+	if (IPH_PROTO(iphdr) == IP_PROTO_ICMP) {
+		struct icmp_echo_hdr *icmphdr = (void*)((uintptr_t)p_uc_data + payload_offset);
+		icmphdr->chksum = 0;
+		icmphdr->chksum = inet_chksum(icmphdr, packet_size - payload_offset);
 	}
 	pbuf_free(p);
 	

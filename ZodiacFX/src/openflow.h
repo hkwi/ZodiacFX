@@ -31,7 +31,6 @@
 
 #include "openflow_spec/openflow_spec10.h"
 #include "openflow_spec/openflow_spec13.h"
-#include "of_helper.h"
 #include <lwip/err.h>
 #include <lwip/tcp.h>
 
@@ -191,14 +190,15 @@ struct fx_group {
 	uint32_t group_id; // in network byte order
 	uint8_t type;
 	bool live;
+	uint32_t weight_total;
 };
-// in host byte order
+// in network byte order
 struct fx_group_bucket {
-	uint32_t group_id; // in network byte order
-	uint16_t weight;
+	uint32_t group_id;
+	uint16_t weight; // in host byte order
 	uint32_t watch_port;
 	uint32_t watch_group;
-	uint16_t actions_len;
+	uint16_t actions_len; // in host byte order
 	void *actions;
 };
 // in host byte order
@@ -246,9 +246,13 @@ void timeout_ofp13_flows(void);
 void check_ofp13_packet_in(void);
 
 static const uint8_t ETH_TYPE_VLAN[] = { 0x81, 0x00 };
-static const uint8_t ETH_TYPE_VLAN2[] = { 0x88, 0xa8 }; // QinQ
+static const uint8_t ETH_TYPE_VLAN2[] = { 0x88, 0xa8 }; // QinQ 802.1Q(802.1ad)
 static const uint8_t ETH_TYPE_IPV4[] = { 0x08, 0x00 };
 static const uint8_t ETH_TYPE_IPV6[] = { 0x86, 0xdd };
+static const uint8_t ETH_TYPE_ARP[] = { 0x08, 0x06 };
+static const uint8_t ETH_TYPE_MPLS[] = { 0x88, 0x47 }; // unicast
+static const uint8_t ETH_TYPE_MPLS2[] = { 0x88, 0x48 }; // multicast
+static const uint8_t ETH_TYPE_PBB[] = { 0x88, 0xe7 };
 
 // workaround for alignment	
 static inline uint32_t get16(uintptr_t pos){

@@ -38,5 +38,6 @@ void set_ip_checksum(void *p_uc_data, uint16_t packet_size, uint16_t iphdr_offse
 
 // --- kwi ---
 bool oxm_strict_equals(const void*, int, const void*, int);
+uint32_t packet_hash(const void*, uint16_t);
 
 #endif /* OF_HELPER_H_ */

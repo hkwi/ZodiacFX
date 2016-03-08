@@ -62,7 +62,7 @@ struct fx_switch_config fx_switch = {
  *  * Flatten pbuf and pass it to tcp_write()
  *    with TCP_WRITE_FLAG_COPY
  */
-char ofp_buffer[OFP_BUFFER_LEN];
+char ofp_buffer[OFP_BUFFER_LEN] = {0};
 
 struct fx_port fx_ports[MAX_PORTS] = {0};
 struct fx_port_count fx_port_counts[MAX_PORTS] = {0};
@@ -291,7 +291,6 @@ static enum ofp_pcb_status ofp_negotiation(struct ofp_pcb *self){
 	if(ofp_rx_length(self) < length){
 		return OFP_NOOP;
 	}
-	
 	
 	bool has_versionbitmap = false;
 	uint32_t versionbitmap = 0;
