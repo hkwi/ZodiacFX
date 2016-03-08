@@ -688,6 +688,8 @@ static void update_fx_ports(void){
 	}
 }
 
+static bool fail_state = true;
+
 void openflow_init(){
 	for(int i=0; i<MAX_GROUP_BUCKETS; i++){
 		fx_group_buckets[i].group_id = ntohl(OFPG13_ANY);
@@ -736,6 +738,16 @@ void openflow_task(){
 		tcp_poll(tcp, ofp_poll_cb, 1); // need to be placed here for catching the very first SYN send failure
 		tcp_connect(tcp, &(c->addr), Zodiac_Config.OFPort, ofp_connected_cb);
 		c->ofp.tcp = tcp;
+	}
+	if(Zodiac_Config.fail_mode==FAIL_MODE_STANDALONE){
+		if(switch_negotiated() && fail_state){
+			fail_state = false;
+			switch_reset();
+		}
+		if(switch_negotiated()==false && fail_state==false){
+			fail_state = true;
+			switch_reset();
+		}
 	}
 }
 

@@ -338,7 +338,7 @@ static uint16_t fill_ofp13_port_stats(uint32_t port, int *mp_index, void *buffer
 		bool complete = true;
 		uint16_t len = 0;
 		for(int i=*mp_index; i<4; i++){
-			if(Zodiac_Config.of_port[i] == 1){
+			if(Zodiac_Config.of_port[i] == PORT_OPENFLOW){
 				*mp_index=i;
 				if(len + 112 > capacity){
 					complete = false;
@@ -362,7 +362,7 @@ static uint16_t fill_ofp13_port_desc(int *mp_index, void *buffer, uint16_t capac
 	uint16_t length = 0;
 	for(int i=*mp_index; i<4; i++){
 		*mp_index = i;
-		if(Zodiac_Config.of_port[i] == 1){
+		if(Zodiac_Config.of_port[i] == PORT_OPENFLOW){
 			if(length + 64 > capacity){
 				complete = false;
 				break;
@@ -2412,7 +2412,7 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 			uint32_t in_port_idx = ntohl(packet->in_port)-1;
 			uint32_t out_port_idx = ntohl(out.port) - 1; // port starts from 1
 			if(out_port_idx < OFPP13_MAX){
-				if(out.port != packet->in_port && out_port_idx<4 && Zodiac_Config.of_port[out_port_idx]==1){
+				if(out.port != packet->in_port && out_port_idx<MAX_PORTS && Zodiac_Config.of_port[out_port_idx]==PORT_OPENFLOW){
 					if(disable_ofp_pipeline == false){
 						fx_port_counts[out_port_idx].tx_packets++;
 						gmac_write(packet->data, packet->length, 1<<out_port_idx);
@@ -2422,7 +2422,7 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 				if(disable_ofp_pipeline == false){
 					uint8_t p = 0;
 					for(uint32_t i=0; i<MAX_PORTS; i++){
-						if(Zodiac_Config.of_port[i]==1 && i != in_port_idx){
+						if(Zodiac_Config.of_port[i]==PORT_OPENFLOW && i != in_port_idx){
 							p |= 1<<i;
 							fx_port_counts[i].tx_packets++;
 						}
@@ -3341,7 +3341,7 @@ void send_ofp13_port_status(){
 		for(int j=0; j<4; j++){
 			uint8_t reason;
 			if((fx_ports[j].send_bits & bits) != 0){
-				if(Zodiac_Config.of_port[j] == 1){
+				if(Zodiac_Config.of_port[j] == PORT_OPENFLOW){
 					reason = OFPPR13_ADD;
 				}else{
 					reason = OFPPR13_DELETE;

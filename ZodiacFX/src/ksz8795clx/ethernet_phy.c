@@ -220,42 +220,7 @@ uint8_t ethernet_phy_reset(Gmac *p_gmac, uint8_t uc_phy_addr)
 	UNUSED(p_gmac);
 	UNUSED(uc_phy_addr);
 	
-//	switch_write(2,76);
-	// soft reset
-	switch_write(2, 0x4c);
-	// disable packet size check, because we use tail-tag mode
-	switch_write(4, 0xF2);
-	// port reset
-	switch_write(31, 0x11);
-	switch_write(47, 0x11);
-	switch_write(63, 0x11);
-	switch_write(79, 0x11);
-	// CPU(port5) controls the traffic
-	// "trap" mode requires ACL bit on.
-	switch_write(21, 0x03);
-	switch_write(37, 0x03);
-	switch_write(53, 0x03);
-	switch_write(69, 0x03);
-	// port vlan
-/* no need to set these
-	switch_write(17, 0x11);
-	switch_write(33, 0x12);
-	switch_write(49, 0x14);
-	switch_write(65, 0x18);
-	switch_write(81, 0x1F);
-*/
-	// disable learning
-	// There's no defined combination of 0x07. We use 0x06.
-/* no need to set these
-	switch_write(18, 0x06);
-	switch_write(34, 0x06);
-	switch_write(50, 0x06);
-	switch_write(66, 0x06);
-*/
-	// flush
-	for(volatile int x = 0;x<100000;x++);
-	switch_write(2, 0x0c);
-//	switch_write(2,12);
+	switch_reset();
 	
 	return 0;
 }

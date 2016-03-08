@@ -68,10 +68,23 @@ struct zodiac_config {
 	int32_t OFEnabled;
 	struct virtlan vlan_list[MAX_VLANS];
 	uint8_t of_port[4];		// If the port is assigned to a VLAN
-	uint8_t failstate;
+	uint8_t fail_mode;
 	uint8_t of_version;
 } PACK_STRUCT_STRUCT;
 PACK_STRUCT_END
+
+// Notes: of_port
+// zodiac_config will be stored in eeprom as user configuration.
+// From vlan_list.portmap, we can regenerate the of_port.
+// of_port was not required to stored in eeprom.
+// of_port will be the active configuration.
+
+#define FAIL_MODE_SECURE 0
+#define FAIL_MODE_STANDALONE 1
+
+#define PORT_UNASSIGNED 0
+#define PORT_OPENFLOW 1
+#define PORT_NATIVE 2
 
 typedef struct arp_header {
 	uint8_t et_dest[6];  /**< Destination node */

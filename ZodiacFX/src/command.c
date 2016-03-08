@@ -342,6 +342,31 @@ void command_root(char *command, char *param1, char *param2, char *param3)
 	return;
 }
 
+
+static void sync_portmap(struct zodiac_config *config){
+	// Create port map
+	for(int i=0; i<MAX_PORTS; i++){
+		config->of_port[i] = 0;
+	}
+	for (int v = 0;v < MAX_VLANS;v++){
+		if (config->vlan_list[v].uActive == 1){
+			for(int p=0; p<MAX_PORTS; p++){
+				if (config->vlan_list[v].portmap[p] != 0){
+					switch(config->vlan_list[v].uVlanType){
+						case 1:
+						config->of_port[p] = PORT_OPENFLOW; // Port is assigned to an OpenFlow VLAN
+						break;
+						
+						case 2:
+						config->of_port[p] = PORT_NATIVE; // Port is assigned to a Native VLAN
+						break;
+					}
+				}
+			}
+		}
+	}
+}
+
 /*
 *	Commands within the config context
 *	
@@ -383,8 +408,8 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 		printf(" OpenFlow Port: %d\r\n" , Zodiac_Config.OFPort);
 		if (Zodiac_Config.OFEnabled == OF_ENABLED) printf(" Openflow Status: Enabled\r\n");
 		if (Zodiac_Config.OFEnabled == OF_DISABLED) printf(" Openflow Status: Disabled\r\n");
-		if (Zodiac_Config.failstate == 0) printf(" Failstate: Secure\r\n");
-		if (Zodiac_Config.failstate == 1) printf(" Failstate: Safe\r\n");
+		if (Zodiac_Config.fail_mode == FAIL_MODE_SECURE) printf(" Failstate: Secure\r\n");
+		if (Zodiac_Config.fail_mode == FAIL_MODE_STANDALONE) printf(" Failstate: Safe\r\n");
 		if (Zodiac_Config.of_version == 1) {
 			printf(" Force OpenFlow version: 1.0 (0x01)\r\n");
 		} else if (Zodiac_Config.of_version == 4){
@@ -425,18 +450,22 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 //
 
 	// Add new VLAN
-	if (strcmp(command, "add")==0 && strcmp(param1, "vlan")==0)
-	{
-		int v;
-		for(v=0;v<MAX_VLANS;v++)
-		{
-			if(Zodiac_Config.vlan_list[v].uActive != 1)
-			{
+	if (strcmp(command, "add")==0 && strcmp(param1, "vlan")==0){
+		for(int v=0; v<MAX_VLANS; v++){
+			if(Zodiac_Config.vlan_list[v].uActive != 1){
 				int namelen = strlen(param3);
+				if(namelen > 15){
+					printf("name length must be shorter than 16 characaters.\r\n");
+					return;
+				}
+				int vlanid;
+				if(1 != sscanf(param2, "%d", &vlanid)){
+					printf("vlan id must be integer.\r\n");
+					return;
+				}
 				Zodiac_Config.vlan_list[v].uActive = 1;
-				sscanf(param2, "%d", &Zodiac_Config.vlan_list[v].uVlanID);
-				if (namelen > 15 ) namelen = 15; // Make sure name is less then 16 characters
-				sprintf(Zodiac_Config.vlan_list[v].cVlanName, param3, namelen);
+				Zodiac_Config.vlan_list[v].uVlanID = vlanid;
+				snprintf(Zodiac_Config.vlan_list[v].cVlanName, 16, "%s", param3);
 				printf("Added VLAN %d '%s'\r\n",Zodiac_Config.vlan_list[v].uVlanID, Zodiac_Config.vlan_list[v].cVlanName);
 				return;
 			}
@@ -447,114 +476,95 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 	}
 	
 	// Delete an existing VLAN
-	if (strcmp(command, "delete")==0 && strcmp(param1, "vlan")==0)
-	{
+	if (strcmp(command, "delete")==0 && strcmp(param1, "vlan")==0){
 		int vlanid;
 		sscanf(param2, "%d", &vlanid);
-		for (int x=0;x<MAX_VLANS;x++)
-		{
-			if(Zodiac_Config.vlan_list[x].uVlanID == vlanid)
-			{
-				Zodiac_Config.vlan_list[x].uActive = 0;
-				Zodiac_Config.vlan_list[x].uVlanType = 0;
-				Zodiac_Config.vlan_list[x].uTagged = 0;
-				Zodiac_Config.vlan_list[x].uVlanID = 0;
+		for (int x=0;x<MAX_VLANS;x++){
+			if(Zodiac_Config.vlan_list[x].uVlanID == vlanid){
+				memset(&Zodiac_Config.vlan_list[x], 0, sizeof(struct virtlan));
 				printf("VLAN %d deleted\r\n",vlanid);
+				sync_portmap(&Zodiac_Config);
 				return;
 			}
 		}
-			printf("Unknown VLAN ID\r\n");
-			return;
+		printf("Unknown VLAN ID\r\n");
+		return;
 	}	
 
 	// Set VLAN type
-	if (strcmp(command, "set")==0 && strcmp(param1, "vlan-type")==0)
-	{
+	if (strcmp(command, "set")==0 && strcmp(param1, "vlan-type")==0){
 		int vlanid;
 		sscanf(param2, "%d", &vlanid);
-		for (int x=0;x<MAX_VLANS;x++)
-		{
-			if(Zodiac_Config.vlan_list[x].uVlanID == vlanid)
-			{
+		for (int x=0;x<MAX_VLANS;x++){
+			if(Zodiac_Config.vlan_list[x].uVlanID == vlanid){
 				if(strcmp(param3, "openflow")==0){
 					Zodiac_Config.vlan_list[x].uVlanType = 1;
 					printf("VLAN %d set as OpenFlow\r\n",vlanid);
+					sync_portmap(&Zodiac_Config);
 					return;
 				}
 				if(strcmp(param3, "native")==0){
 					Zodiac_Config.vlan_list[x].uVlanType = 2;
 					printf("VLAN %d set as Native\r\n",vlanid);
+					sync_portmap(&Zodiac_Config);
 					return;
 				}
 				printf("Unknown VLAN type\r\n");
 				return;
 			}
 		}
-			printf("Unknown VLAN ID\r\n");
-			return;
+		printf("Unknown VLAN ID\r\n");
+		return;
 	}
 	
 	// Add port to VLAN
-	if (strcmp(command, "add")==0 && strcmp(param1, "vlan-port")==0)
-	{
-		int vlanid, port, x;
+	if (strcmp(command, "add")==0 && strcmp(param1, "vlan-port")==0){
+		int vlanid, port;
 		sscanf(param2, "%d", &vlanid);
 		sscanf(param3, "%d", &port);
-		
 		if (port < 1 || port > 4){
 			printf("Invalid port number, ports are numbered 1 - 4\r\n");
 			return;
 		}
-		
 		// Check if the port is already assigned to a VLAN
-		for (x=0;x<MAX_VLANS;x++){
-			if(Zodiac_Config.vlan_list[x].portmap[port-1] == 1)
-			{
+		for (int x=0; x<MAX_VLANS; x++){
+			if(Zodiac_Config.vlan_list[x].portmap[port-1] != 0){
 				printf("Port %d is already assigned to VLAN %d\r\n", port, Zodiac_Config.vlan_list[x].uVlanID);
 				return;
 			}
 		}
-		
 		// Assign the port to the requested VLAN
-		for (x=0;x<MAX_VLANS;x++)
-		{
-			if(Zodiac_Config.vlan_list[x].uVlanID == vlanid)
-			{
-				if(Zodiac_Config.vlan_list[x].portmap[port-1] == 0  || Zodiac_Config.vlan_list[x].portmap[port-1] > 1 ){
-					Zodiac_Config.vlan_list[x].portmap[port-1] = 1;
-					Zodiac_Config.of_port[port-1] = Zodiac_Config.vlan_list[x].uVlanType;
-					printf("Port %d is now assigned to VLAN %d\r\n", port, vlanid);
-					return;
-				}
+		for (int x=0; x<MAX_VLANS; x++){
+			if(Zodiac_Config.vlan_list[x].uVlanID == vlanid){
+				Zodiac_Config.vlan_list[x].portmap[port-1] = 1;
+				printf("Port %d is now assigned to VLAN %d\r\n", port, vlanid);
+				sync_portmap(&Zodiac_Config);
+				return;
 			}
 		}
-			printf("Unknown VLAN ID\r\n");
-			return;
-	}	
+		printf("Unknown VLAN ID\r\n");
+		return;
+	}
 
 	// Delete a port from a VLAN
-	if (strcmp(command, "delete")==0 && strcmp(param1, "vlan-port")==0)
-	{
-		int port, x;
+	if (strcmp(command, "delete")==0 && strcmp(param1, "vlan-port")==0){
+		int port;
 		sscanf(param2, "%d", &port);
-		
 		if (port < 1 || port > 4){
 			printf("Invalid port number, ports are numbered 1 - 4\r\n");
 			return;
 		}
-		
 		// Check if the port is already assigned to a VLAN
-		for (x=0;x<MAX_VLANS;x++){
-			if(Zodiac_Config.vlan_list[x].portmap[port-1] == 1)
-			{
+		for (int x=0;x<MAX_VLANS;x++){
+			if(Zodiac_Config.vlan_list[x].portmap[port-1] != 0){
 				Zodiac_Config.vlan_list[x].portmap[port-1] = 0;
-				Zodiac_Config.of_port[port-1] = 0;
 				printf("Port %d has been removed from VLAN %d\r\n", port, Zodiac_Config.vlan_list[x].uVlanID);
+				sync_portmap(&Zodiac_Config);
 				return;
 			}
 		}
-			printf("Port %d is not assigned to this VLAN\r\n",port);
-			return;
+		printf("Port %d is not assigned to this VLAN\r\n", port);
+		return;
 	}
 
 //
@@ -688,7 +698,7 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 			6633,				// TCP port of SDN Controller
 			1					// OpenFlow enabled
 		};
-		memset(&reset_config.vlan_list, 0, sizeof(struct virtlan)* MAX_VLANS); // Clear vlan array
+		memset(reset_config.vlan_list, 0, sizeof(struct virtlan)* MAX_VLANS); // Clear vlan array
 		
 		// Config VLAN 100
 		sprintf(reset_config.vlan_list[0].cVlanName, "Openflow");	// Vlan name
@@ -709,17 +719,14 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 		reset_config.vlan_list[1].uTagged = 0;		// Set as untagged			
 		
 		// Set ports
-		reset_config.of_port[0] = 1;		// Port 1 is an OpenFlow port
-		reset_config.of_port[1] = 1;		// Port 2 is an Openflow port
-		reset_config.of_port[2] = 1;		// Port 3 is an OpenFlow port
-		reset_config.of_port[3] = 2;		// Port 4 is an Native port
+		sync_portmap(&reset_config);
 		
 		// Failstate
-		reset_config.failstate = 0;			// Failstate Secure
+		reset_config.fail_mode = FAIL_MODE_SECURE;			// Failstate Secure
 		
 		// Force OpenFlow version
 		reset_config.of_version = 0;			// Force version disabled
-								
+		
 		memcpy(reset_config.MAC_address, Zodiac_Config.MAC_address, 6);		// Copy over existng MAC address so it is not reset
 		memcpy(&Zodiac_Config, &reset_config, sizeof(struct zodiac_config));
 		saveConfig();
@@ -730,10 +737,10 @@ void command_config(char *command, char *param1, char *param2, char *param3)
 	if (strcmp(command, "set")==0 && strcmp(param1, "failstate")==0)
 	{
 		if (strcmp(param2, "secure")==0){
-			Zodiac_Config.failstate = 0;
+			Zodiac_Config.fail_mode = FAIL_MODE_SECURE;
 			printf("Failstate set to Secure\r\n");
 		} else if (strcmp(param2, "safe")==0){
-			Zodiac_Config.failstate = 1;
+			Zodiac_Config.fail_mode = FAIL_MODE_STANDALONE;
 			printf("Failstate set to Safe\r\n");
 		} else {
 			printf("Invalid failstate type\r\n");

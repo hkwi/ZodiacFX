@@ -163,28 +163,6 @@ int main (void)
 	/* Initialize timer. */
 	sys_init_timing();
 	
-	int v,p;
-	// Create port map
-	for (v = 0;v < MAX_VLANS;v++)
-	{
-		if (Zodiac_Config.vlan_list[v].uActive == 1 && Zodiac_Config.vlan_list[v].uVlanType == 1)
-		{
-			for(p=0;p<4;p++)
-			{
-				if (Zodiac_Config.vlan_list[v].portmap[p] == 1) Zodiac_Config.of_port[p] = 1; // Port is assigned to an OpenFlow VLAN
-			}
-		}
-		
-		if (Zodiac_Config.vlan_list[v].uActive == 1 && Zodiac_Config.vlan_list[v].uVlanType == 2)
-		{
-			for(p=0;p<4;p++)
-			{
-				if (Zodiac_Config.vlan_list[v].portmap[p] == 1) Zodiac_Config.of_port[p] = 0; // Port is assigned to a Native VLAN
-
-			}
-		}
-	}
-	
 	openflow_init();
 	while(1)
 	{

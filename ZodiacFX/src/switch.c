@@ -304,7 +304,7 @@ void gmac_write(const void *buffer, uint16_t ul_size, uint8_t port){
 	if(port==0x80){ // special rule here. don't send to openflow port
 		uint8_t n = 0;
 		for(int i=0; i<MAX_PORTS; i++){
-			if(Zodiac_Config.of_port[i] != 1){
+			if(Zodiac_Config.of_port[i] == PORT_NATIVE){
 				n |= 1<<i;
 			}
 		}
@@ -677,6 +677,73 @@ void switch_init(){
 	}
 }
 
+void switch_reset(){
+	//	switch_write(2,76);
+	// soft reset
+	switch_write(2, 0x4c);
+	// disable packet size check, because we use tail-tag mode
+	switch_write(4, 0xF2);
+	// port reset
+	switch_write(31, 0x11);
+	switch_write(47, 0x11);
+	switch_write(63, 0x11);
+	switch_write(79, 0x11);
+	if(Zodiac_Config.fail_mode==FAIL_MODE_STANDALONE && switch_negotiated()==false){
+		// "no trap"
+		switch_write(21, 0x0);
+		switch_write(37, 0x0);
+		switch_write(53, 0x0);
+		switch_write(69, 0x0);
+		// port vlan
+		uint8_t bits_openflow = 0;
+		uint8_t bits_native = 0x10;
+		for(int i=0; i<MAX_PORTS; i++){
+			if(Zodiac_Config.of_port[i] == PORT_OPENFLOW){
+				bits_openflow |= 1<<i;
+			}
+			if(Zodiac_Config.of_port[i] == PORT_NATIVE){
+				bits_native |= 1<<i;
+			}
+		}
+		uint8_t ctl5[] = { 17, 33, 49, 65 };
+		for(int i=0; i<MAX_PORTS; i++){
+			uint8_t bits = 0;
+			if(Zodiac_Config.of_port[i] == PORT_OPENFLOW){
+				bits = bits_openflow;
+			}else if(Zodiac_Config.of_port[i] == PORT_NATIVE){
+				bits = bits_native;
+			}
+			switch_write(ctl5[i], bits);
+		}
+		switch_write(81, bits_native);
+	}else{
+		// CPU(port5) controls the traffic
+		// "trap" mode requires ACL bit on.
+		switch_write(21, 0x03);
+		switch_write(37, 0x03);
+		switch_write(53, 0x03);
+		switch_write(69, 0x03);
+		// port vlan
+		switch_write(17, 0x1F);
+		switch_write(33, 0x1F);
+		switch_write(49, 0x1F);
+		switch_write(65, 0x1F);
+		switch_write(81, 0x1F);
+	}
+	// disable learning
+	// There's no defined combination of 0x07. We use 0x06.
+/* no need to set these
+	switch_write(18, 0x06);
+	switch_write(34, 0x06);
+	switch_write(50, 0x06);
+	switch_write(66, 0x06);
+*/
+	// flush
+	for(volatile int x = 0;x<100000;x++);
+	switch_write(2, 0x0c);
+//	switch_write(2,12);
+}
+
 void switch_task(struct netif *netif){
 	uint8_t rx_buffer[GMAC_FRAME_LENTGH_MAX];
 	uint32_t rx_buffer_length = GMAC_FRAME_LENTGH_MAX;
@@ -687,7 +754,7 @@ void switch_task(struct netif *netif){
 		// switch is configured to work in tail tag mode
 		rx_buffer_length--;
 		uint8_t tag = rx_buffer[rx_buffer_length];
-		if(tag<4 && Zodiac_Config.of_port[tag]==1){ // XXX: port number hardcoded here
+		if(tag<MAX_PORTS && Zodiac_Config.of_port[tag]==PORT_OPENFLOW){
 			if(disable_ofp_pipeline == false){
 				struct fx_packet frame = {
 					.length = rx_buffer_length,

@@ -35,7 +35,7 @@
 
 void spi_init(void);
 void switch_init(void);
-void task_switch(struct netif *netif);
+void switch_reset(void);
 void switch_task(struct netif *netif);
 void gmac_write(const void *p_buffer, uint16_t ul_size, uint8_t port);
 uint64_t switch_read(uint8_t param1);
@@ -49,7 +49,6 @@ void stack_write(uint8_t data);
 
 void sync_switch_port_counts(uint8_t);
 
-// kwi //
 uint32_t get_switch_config(uint32_t);
 uint32_t get_switch_status(uint32_t);
 uint32_t get_switch_ofppf13_curr(uint32_t);
