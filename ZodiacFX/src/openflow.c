@@ -528,21 +528,33 @@ static err_t ofp_recv_cb(void *arg, struct tcp_pcb *tcp, struct pbuf *p, err_t e
 		return ofp_close(ofp, CONNECT_RETRY_INTERVAL);
 	}
 	
-	// there are very limited number of POOL mem
-	struct pbuf *n = pbuf_alloc(PBUF_RAW, p->tot_len, PBUF_RAM);
-	if(n != NULL){
-		// not pbuf_copy because p was queue
-		pbuf_copy_partial(p, ofp_buffer, p->tot_len, 0);
-		pbuf_take(n, ofp_buffer, p->tot_len);
-		pbuf_free(p);
-		tcp_recved(tcp, p->tot_len);
-		if(ofp->rbuf == NULL){
-			ofp->rbuf = n;
-		}else{
-			pbuf_chain(ofp->rbuf, n);
+	ofp->alive_until = sys_get_ms() + OFP_TIMEOUT;
+	
+	err_t ret = ERR_OK;
+	if(0xffff - ofp->rbuf->tot_len < p->tot_len){
+		// we can't chain anyway, because of tot_len field overflow
+		// just tell tcp stack buffer full.
+		ret = ERR_MEM;
+	} else {
+		// there are very limited number of POOL mem,
+		// so don't chain the PBUF_POOL pbuf directly,
+		// we'll allocate PBUF_RAM instead.
+		struct pbuf *n = pbuf_alloc(PBUF_RAW, p->tot_len, PBUF_RAM);
+		if(n != NULL){
+			// not pbuf_copy because p was queue
+			pbuf_copy_partial(p, ofp_buffer, p->tot_len, 0);
+			pbuf_take(n, ofp_buffer, p->tot_len);
+			pbuf_free(p);
+			tcp_recved(tcp, p->tot_len);
+			if(ofp->rbuf == NULL){
+				ofp->rbuf = n;
+			}else{
+				pbuf_chain(ofp->rbuf, n);
+			}
+		} else {
+			ret = ERR_MEM;
 		}
 	}
-	ofp->alive_until = sys_get_ms() + OFP_TIMEOUT;
 	switch(ofp_handle(ofp)){
 		case OFP_OK:
 			tcp_output(ofp->tcp);
@@ -552,10 +564,7 @@ static err_t ofp_recv_cb(void *arg, struct tcp_pcb *tcp, struct pbuf *p, err_t e
 			return ofp_close(ofp, CONNECT_RETRY_INTERVAL);
 	}
 	ofp_update(ofp);
-	if(n == NULL){
-		return ERR_BUF;
-	}
-	return ERR_OK;
+	return ret;
 }
 
 static err_t ofp_connected_cb(void *arg, struct tcp_pcb *tcp, err_t err){
