@@ -40,4 +40,7 @@ void set_ip_checksum(void *p_uc_data, uint16_t packet_size, uint16_t iphdr_offse
 bool oxm_strict_equals(const void*, int, const void*, int);
 uint32_t packet_hash(const void*, uint16_t);
 
+bool field_match10(const struct ofp_match *a, const struct ofp_match *b);
+bool field_match13(const void*, int, const void*, int);
+
 #endif /* OF_HELPER_H_ */

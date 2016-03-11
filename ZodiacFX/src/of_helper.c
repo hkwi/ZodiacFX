@@ -48,16 +48,36 @@
 extern int iLastFlow;
 extern int OF_Version;
 
-static inline uint64_t (htonll)(uint64_t n)
-{
-	return htonl(1) == 1 ? n : ((uint64_t) htonl(n) << 32) | htonl(n >> 32);
-}
-
 uint32_t packet_hash(const void *data, uint16_t length){
 	uint32_t L[12] = {0};
 	if(length > 48){ length=48; }
 	memcpy(L, data, length);
 	return L[0]^L[1]^L[2]^L[3]^L[4]^L[5]^L[6]^L[7]^L[8]^L[9]^L[10]^L[11];
+}
+
+
+void set_csum_tp_zero(void *data, uint16_t length, uint16_t iphdr_offset){
+	struct ip_hdr *iphdr = (void*)((uintptr_t)data + iphdr_offset);
+	struct ip_addr src = {
+		.addr = iphdr->src.addr,
+	};
+	struct ip_addr dst = {
+		.addr = iphdr->dest.addr,
+	};
+	uint16_t payload_offset = iphdr_offset + IPH_HL(iphdr)*4;
+	if (IPH_PROTO(iphdr) == IP_PROTO_TCP) {
+		struct tcp_hdr *tcphdr = (void*)((uintptr_t)data + payload_offset);
+		tcphdr->chksum = 0;
+	}
+	if (IPH_PROTO(iphdr) == IP_PROTO_UDP) {
+		struct udp_hdr *udphdr = (void*)((uintptr_t)data + payload_offset);
+		udphdr->chksum = 0;
+	}
+	if (IPH_PROTO(iphdr) == IP_PROTO_ICMP) {
+		struct icmp_echo_hdr *icmphdr = (void*)((uintptr_t)data + payload_offset);
+		icmphdr->chksum = 0;
+	}
+	IPH_CHKSUM_SET(iphdr, 0);
 }
 
 /*
@@ -518,4 +538,60 @@ bool field_match13(const void *oxm_a, int len_a, const void *oxm_b, int len_b){
 	return true;
 }
 
-
+/*
+*	Compares 2 ofp1.0 tuple match
+*	Return 1 if a matches for b (b is wider than a)
+*/
+bool field_match10(const struct ofp_match *a, const struct ofp_match *b){
+	uint32_t wild_a = ntohl(a->wildcards);
+	uint32_t wild_b = ntohl(b->wildcards);
+	if((wild_a & OFPFW_ALL) != 0){
+		if((wild_b & OFPFW_ALL) != 0){
+			return true;
+		}else{
+			return false;
+		}
+	}
+	if((wild_b & OFPFW_ALL) != 0){
+		return true;
+	}
+	uint32_t WILD_BITS = 0x3000FF;
+	if(((wild_a&WILD_BITS)&(wild_b&WILD_BITS)) != (wild_b&WILD_BITS)){
+		return false; // a has more wildcard bits
+	}
+	if((wild_a&OFPFW_NW_SRC_MASK) > (wild_b&OFPFW_NW_SRC_MASK)){
+		return false;
+	}
+	if((wild_a&OFPFW_NW_DST_MASK) > (wild_b&OFPFW_NW_DST_MASK)){
+		return false;
+	}
+	// below expects masked fields are filled with 0
+	if(memcmp(a->dl_src, b->dl_src, OFP10_ETH_ALEN) != 0){
+		return false;
+	}
+	if(memcmp(a->dl_dst, b->dl_dst, OFP10_ETH_ALEN) != 0){
+		return false;
+	}
+	if(a->dl_vlan != b->dl_vlan){
+		return false;
+	}
+	if(a->nw_tos != b->nw_tos){
+		return false;
+	}
+	if(a->nw_proto != b->nw_proto){
+		return false;
+	}
+	if(a->nw_src != b->nw_src){
+		return false;
+	}
+	if(a->nw_dst != b->nw_dst){
+		return false;
+	}
+	if(a->tp_src != b->tp_src){
+		return false;
+	}
+	if(a->tp_dst != b->tp_dst){
+		return false;
+	}
+	return true;
+}

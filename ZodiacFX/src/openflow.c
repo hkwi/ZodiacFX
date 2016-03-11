@@ -68,6 +68,7 @@ struct fx_port fx_ports[MAX_PORTS] = {0};
 struct fx_port_count fx_port_counts[MAX_PORTS] = {0};
 
 struct fx_table_count fx_table_counts[MAX_TABLES] = {0};
+struct fx_table_feature fx_table_features[MAX_TABLES] = {0};
 
 uint32_t fx_buffer_id = 0; // incremental
 struct fx_packet_in fx_packet_ins[MAX_BUFFERS] = {0};
@@ -343,6 +344,8 @@ static enum ofp_pcb_status ofp_negotiation(struct ofp_pcb *self){
 static enum ofp_pcb_status ofp_multipart_complete(struct ofp_pcb *self){
 	if(OF_Version == 4){
 		return ofp13_multipart_complete(self);
+	} else if(OF_Version == 1){
+		return ofp10_multipart_complete(self);
 	}
 	return OFP_OK;
 }
@@ -447,8 +450,50 @@ static enum ofp_pcb_status ofp_handle(struct ofp_pcb *self){
 				break;
 			}
 		} else if(req.version == 1){
-			// TODO: implement here
-			ret = ofp_write_error(self, OFPET10_BAD_REQUEST, OFPBRC10_BAD_TYPE);
+			switch(req.type){
+				case OFPT10_BARRIER_REQUEST:
+				if(self->mpreq_on){
+					ret = ofp_write_error(self, OFPET10_BAD_REQUEST, OFPBRC10_EPERM);
+				} else if(ofp_rx_length(self) < length || ofp_tx_room(self) < 8){
+					ret = OFP_NOOP;
+				} else {
+					self->rskip += length;
+					struct ofp_header rep = {
+						.version = 1,
+						.type = OFPT10_BARRIER_REPLY,
+						.length = htons(8),
+						.xid = req.xid,
+					};
+					ofp_tx_write(self, &rep, 8);
+					ret = OFP_OK;
+				}
+				break;
+				
+				case OFPT10_STATS_REQUEST:
+				{
+					struct ofp_stats_request mpreq;
+					memcpy(&mpreq, self->mpreq_hdr, sizeof(mpreq));
+					if(self->mpreq_on && req.xid != mpreq.header.xid){
+						ret = ofp_write_error(self, OFPET10_BAD_REQUEST, OFPBRC10_EPERM);
+					} else if(length < 12 || length > 12+MP_UNIT_MAXSIZE){
+						ofp_write_error(self, OFPET10_BAD_REQUEST, OFPBRC10_BAD_LEN);
+						ret = OFP_CLOSE;
+					} else if(ofp_tx_room(self) < 12){
+						ret = OFP_NOOP;
+					} else {
+						ofp_rx_read(self, self->mpreq_hdr, 12);
+						self->mpreq_on = true;
+						self->mpreq_pos = 12;
+						self->mp_out_index = -1;
+						ret = ofp_multipart_complete(self);
+					}
+				}
+				break;
+				
+				default:
+				ret = ofp10_handle(self);
+				break;
+			}
 		} else {
 			ret = ofp_write_error(self, OFPET10_BAD_REQUEST, OFPBRC10_BAD_VERSION);
 		}
@@ -796,25 +841,30 @@ void openflow_pipeline(struct fx_packet *packet){
 	}
 */
 	
-	int flow = lookup_fx_table(packet, &oob, 0);
-	fx_table_counts[0].lookup++;
-	if(flow < 0){
-		if(OF_Version==1){
-			// XXX: packet-in
+	if(OF_Version == 1){
+		for(int i=0; i<MAX_TABLES; i++){
+			int flow = lookup_fx_table(packet, &oob, i);
+			fx_table_counts[i].lookup++;
+			if(flow >= 0){
+				fx_table_counts[i].matched++;
+				fx_flow_counts[flow].packet_count++;
+				fx_flow_counts[flow].byte_count += packet->length;
+				fx_flow_timeouts[flow].update = sys_get_ms();
+				execute_ofp10_flow(packet, &oob, flow);
+			}
 		}
-		return;
-	}
-	if(OF_Version == 4 && fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
-		// table-miss flow entry
-	} else {
-		fx_table_counts[0].matched++;
-	}
-	fx_flow_counts[flow].packet_count++;
-	fx_flow_counts[flow].byte_count += packet->length;
-	fx_flow_timeouts[flow].update = sys_get_ms();
-	if(OF_Version == 4){
+		// XXX: packet-in
+	}else if(OF_Version == 4){
+		int flow = lookup_fx_table(packet, &oob, 0);
+		fx_table_counts[0].lookup++;
+		if(OF_Version == 4 && fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
+			// table-miss flow entry
+		} else {
+			fx_table_counts[0].matched++;
+		}
+		fx_flow_counts[flow].packet_count++;
+		fx_flow_counts[flow].byte_count += packet->length;
+		fx_flow_timeouts[flow].update = sys_get_ms();
 		execute_ofp13_flow(packet, &oob, flow);
-	} else if(OF_Version == 1){
-		execute_ofp10_flow(packet, &oob, flow);
 	}
 }

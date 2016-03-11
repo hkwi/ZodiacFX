@@ -74,17 +74,6 @@ void printintro(void);
 void printhelp(void);
 
 /*
-*	Converts a 64bit value from host to network format
-*
-*	@param n - value to convert
-*	
-*/
-static inline uint64_t (htonll)(uint64_t n)
-{
-	return htonl(1) == 1 ? n : ((uint64_t) htonl(n) << 32) | htonl(n >> 32);
-}
-
-/*
 *	Load the configuration settings from EEPROM 
 *
 */

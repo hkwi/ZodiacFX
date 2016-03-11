@@ -373,6 +373,24 @@ uint32_t get_switch_status(uint32_t port){
 	return ret;
 }
 
+uint32_t get_switch_ofppf10_curr(uint32_t port){
+	uint32_t ret = 0;
+	if(port >= 4){
+		return ret;
+	}
+	ret |= OFPPF10_COPPER;
+	static const uint8_t status1[] = {25,41,57,73};
+	uint8_t r = switch_read(status1[port]);
+	static const uint32_t idx[] = {
+		OFPPF10_10MB_HD,
+		OFPPF10_10MB_FD,
+		OFPPF10_100MB_HD,
+		OFPPF10_100MB_FD,
+	};
+	ret |= idx[(r>>1)&0x3];
+	return ret;
+}
+
 uint32_t get_switch_ofppf13_curr(uint32_t port){
 	uint32_t ret = 0;
 	if(port >= 4){
@@ -388,6 +406,41 @@ uint32_t get_switch_ofppf13_curr(uint32_t port){
 		OFPPF13_100MB_FD,
 	};
 	ret |= idx[(r>>1)&0x3];
+	return ret;
+}
+
+uint32_t get_switch_ofppf10_advertised(uint32_t port){
+	uint32_t ret = 0;
+	if(port >= 4){
+		return ret;
+	}
+	ret |= OFPPF10_COPPER;
+	
+	static const uint8_t ctl7[] = {23, 39, 55, 71};
+	uint8_t r = switch_read(ctl7[port]);
+	if((r & 0x30)==0x10){
+		ret |= OFPPF10_PAUSE;
+	}
+	if((r & 0x30)==0x20){
+		ret |= OFPPF10_PAUSE_ASYM;
+	}
+	if((r & 0x08) != 0){
+		ret |= OFPPF10_100MB_FD;
+	}
+	if((r & 0x04) != 0){
+		ret |= OFPPF10_100MB_HD;
+	}
+	if((r & 0x02) != 0){
+		ret |= OFPPF10_10MB_FD;
+	}
+	if((r & 0x01) != 0){
+		ret |= OFPPF10_10MB_HD;
+	}
+	static const uint8_t ctl9[] = {28,44,60,76};
+	r = switch_read(ctl9[port]);
+	if((r & 0x80) == 0){
+		ret |= OFPPF10_AUTONEG;
+	}
 	return ret;
 }
 
@@ -422,6 +475,36 @@ uint32_t get_switch_ofppf13_advertised(uint32_t port){
 	r = switch_read(ctl9[port]);
 	if((r & 0x80) == 0){
 		ret |= OFPPF13_AUTONEG;
+	}
+	return ret;
+}
+
+uint32_t get_switch_ofppf10_peer(uint32_t port){
+	uint32_t ret = 0;
+	if(port >= 4){
+		return ret;
+	}
+	ret |= OFPPF10_COPPER;
+	
+	static const uint8_t status0[] = {24,40,56,72};
+	uint8_t r = switch_read(status0[port]);
+	if((r & 0x30)==0x10){
+		ret |= OFPPF10_PAUSE;
+	}
+	if((r & 0x30)==0x20){
+		ret |= OFPPF10_PAUSE_ASYM;
+	}
+	if((r & 0x08) != 0){
+		ret |= OFPPF10_100MB_FD;
+	}
+	if((r & 0x04) != 0){
+		ret |= OFPPF10_100MB_HD;
+	}
+	if((r & 0x02) != 0){
+		ret |= OFPPF10_10MB_FD;
+	}
+	if((r & 0x01) != 0){
+		ret |= OFPPF10_10MB_HD;
 	}
 	return ret;
 }

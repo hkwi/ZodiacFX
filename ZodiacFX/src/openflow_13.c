@@ -51,17 +51,6 @@ extern int OF_Version;
 extern int iLastFlow;
 extern int iLastGroup;
 
-/*
-*	Converts a 64bit value from host to network format
-*
-*	@param n - value to convert.
-*
-*/
-static inline uint64_t (htonll)(uint64_t n)
-{
-	return htonl(1) == 1 ? n : ((uint64_t) htonl(n) << 32) | htonl(n >> 32);
-}
-
 extern bool disable_ofp_pipeline;
 extern char ofp_buffer[OFP_BUFFER_LEN];
 extern struct controller controllers[MAX_CONTROLLERS];
@@ -115,7 +104,7 @@ static int filter_ofp13_flow(int first, struct ofp13_filter filter){
 				continue;
 			}
 		} else {
-			if(field_match13(fx_flows[i].oxm, fx_flows[i].oxm_length, filter.oxm, filter.oxm_length) == 0){
+			if(field_match13(fx_flows[i].oxm, fx_flows[i].oxm_length, filter.oxm, filter.oxm_length) == false){
 				continue;
 			}
 		}
@@ -135,7 +124,7 @@ static int filter_ofp13_flow(int first, struct ofp13_filter filter){
 						if(action.type==htons(OFPAT13_OUTPUT)){
 							struct ofp13_action_output output;
 							memcpy(&output, (void*)act, sizeof(output));
-							if (output.port == filter.out_port){
+							if (ntohl(output.port) == filter.out_port){
 								out_port_match = true;
 							}
 						}
@@ -164,7 +153,7 @@ static int filter_ofp13_flow(int first, struct ofp13_filter filter){
 						if(action.type==htons(OFPAT13_GROUP)){
 							struct ofp13_action_group group;
 							memcpy(&group, (void*)act, sizeof(group));
-							if (group.group_id == filter.out_group){
+							if (ntohl(group.group_id) == filter.out_group){
 								out_group_match = true;
 							}
 						}
@@ -205,7 +194,7 @@ static uint16_t fill_ofp13_flow_stats(const void *cunit, int *mp_index, void *bu
 			complete = false;
 			break;
 		}
-		uint32_t duration = sys_get_ms() - fx_flow_timeouts[i].init;
+		uint64_t duration = sys_get_ms64() - fx_flow_timeouts[i].init;
 		struct ofp13_flow_stats stats = {
 			.length = htons(offset_inst+fx_flows[i].ops_length),
 			.table_id = fx_flows[i].table_id,
@@ -835,7 +824,9 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 		}
 		if (self->mpreq_pos >= length && (ntohs(mpres.flags) & OFPMPF13_REQ_MORE) == 0){
 			self->mpreq_pos = 0;
-			self->mpreq_on = false;
+			if(mpreq.flags & ntohs(OFPMPF13_REQ_MORE)==0){
+				self->mpreq_on = false;
+			}
 		}
 	}
 	return OFP_OK;

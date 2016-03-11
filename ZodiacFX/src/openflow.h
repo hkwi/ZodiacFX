@@ -81,6 +81,10 @@ struct fx_table_count {
 	uint64_t lookup;
 	uint64_t matched;
 };
+struct fx_table_feature {
+	char name[32];
+	uint32_t max_entries;
+};
 #define MAX_TABLES 10 // must be smaller than OFPTT13_MAX
 
 struct fx_packet { // in network byte order
@@ -224,13 +228,13 @@ uint16_t ofp_tx_room(const struct ofp_pcb*);
 uint16_t ofp_tx_write(struct ofp_pcb*, const void*, uint16_t);
 uint16_t ofp_set_error(const void*, uint16_t, uint16_t);
 
-bool field_match13(const void*, int, const void*, int);
-
 
 // openflow message handling
 enum ofp_pcb_status ofp_write_error(struct ofp_pcb*, uint16_t, uint16_t);
 enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb*);
+enum ofp_pcb_status ofp10_multipart_complete(struct ofp_pcb*);
 enum ofp_pcb_status ofp13_handle(struct ofp_pcb*);
+enum ofp_pcb_status ofp10_handle(struct ofp_pcb*);
 
 // flow processing
 int lookup_fx_table(const struct fx_packet*, const struct fx_packet_oob*, uint8_t);
@@ -273,3 +277,12 @@ static inline uint32_t get64(uintptr_t pos){
 	return ret;
 }
 
+/*
+*	Converts a 64bit value from host to network format
+*
+*	@param n - value to convert.
+*
+*/
+static inline uint64_t (htonll)(uint64_t n){
+	return htonl(1) == 1 ? n : ((uint64_t) htonl(n) << 32) | htonl(n >> 32);
+}

@@ -51,6 +51,9 @@ void sync_switch_port_counts(uint8_t);
 
 uint32_t get_switch_config(uint32_t);
 uint32_t get_switch_status(uint32_t);
+uint32_t get_switch_ofppf10_curr(uint32_t);
+uint32_t get_switch_ofppf10_advertised(uint32_t);
+uint32_t get_switch_ofppf10_peer(uint32_t);
 uint32_t get_switch_ofppf13_curr(uint32_t);
 uint32_t get_switch_ofppf13_advertised(uint32_t);
 uint32_t get_switch_ofppf13_peer(uint32_t);
