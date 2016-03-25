@@ -545,14 +545,14 @@ bool field_match13(const void *oxm_a, int len_a, const void *oxm_b, int len_b){
 bool field_match10(const struct ofp_match *a, const struct ofp_match *b){
 	uint32_t wild_a = ntohl(a->wildcards);
 	uint32_t wild_b = ntohl(b->wildcards);
-	if((wild_a & OFPFW_ALL) != 0){
-		if((wild_b & OFPFW_ALL) != 0){
+	if(wild_a == OFPFW_ALL){
+		if(wild_b == OFPFW_ALL){
 			return true;
 		}else{
 			return false;
 		}
 	}
-	if((wild_b & OFPFW_ALL) != 0){
+	if(wild_b == OFPFW_ALL){
 		return true;
 	}
 	uint32_t WILD_BITS = 0x3000FF;
@@ -566,32 +566,49 @@ bool field_match10(const struct ofp_match *a, const struct ofp_match *b){
 		return false;
 	}
 	// below expects masked fields are filled with 0
-	if(memcmp(a->dl_src, b->dl_src, OFP10_ETH_ALEN) != 0){
+	if((wild_b & OFPFW_DL_SRC) != 0){
+		if(memcmp(a->dl_src, b->dl_src, OFP10_ETH_ALEN) != 0){
+			return false;
+		}
+	}
+	if((wild_b & OFPFW_DL_DST) != 0){
+		if(memcmp(a->dl_dst, b->dl_dst, OFP10_ETH_ALEN) != 0){
+			return false;
+		}
+	}
+	if((wild_b & OFPFW_DL_VLAN) != 0){
+		if(a->dl_vlan != b->dl_vlan){
+			return false;
+		}
+	}
+	// xxx: OFPFW_DL_VLAN_PCP?
+	if((wild_b & OFPFW_NW_TOS) != 0){
+		if(a->nw_tos != b->nw_tos){
+			return false;
+		}
+	}
+	if((wild_b & OFPFW_NW_PROTO) != 0){
+		if(a->nw_proto != b->nw_proto){
+			return false;
+		}
+	}
+	uint8_t mlen = (wild_b & OFPFW_NW_SRC_MASK)>>OFPFW_NW_SRC_SHIFT;
+	if((a->nw_src>>mlen) != (b->nw_src>>mlen)){
 		return false;
 	}
-	if(memcmp(a->dl_dst, b->dl_dst, OFP10_ETH_ALEN) != 0){
+	mlen = (wild_b & OFPFW_NW_DST_MASK)>>OFPFW_NW_DST_SHIFT;
+	if((a->nw_dst>>mlen) != (b->nw_dst>>mlen)){
 		return false;
 	}
-	if(a->dl_vlan != b->dl_vlan){
-		return false;
+	if((wild_b & OFPFW_TP_SRC) != 0){
+		if(a->tp_src != b->tp_src){
+			return false;
+		}
 	}
-	if(a->nw_tos != b->nw_tos){
-		return false;
-	}
-	if(a->nw_proto != b->nw_proto){
-		return false;
-	}
-	if(a->nw_src != b->nw_src){
-		return false;
-	}
-	if(a->nw_dst != b->nw_dst){
-		return false;
-	}
-	if(a->tp_src != b->tp_src){
-		return false;
-	}
-	if(a->tp_dst != b->tp_dst){
-		return false;
+	if((wild_b & OFPFW_TP_DST) != 0){
+		if(a->tp_dst != b->tp_dst){
+			return false;
+		}
 	}
 	return true;
 }

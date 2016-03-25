@@ -541,6 +541,7 @@ uint32_t get_switch_ofppf13_peer(uint32_t port){
 
 extern struct fx_port_count fx_port_counts[4];
 void sync_switch_port_counts(uint8_t port_index){
+	if(port_index >= MAX_PORTS){ switch_unreach(); }
 	uint8_t txreg[4];
 	uint8_t rxreg[5];
 	

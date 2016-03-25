@@ -842,16 +842,18 @@ void openflow_pipeline(struct fx_packet *packet){
 */
 	
 	if(OF_Version == 1){
-		for(int i=0; i<MAX_TABLES; i++){
-			int flow = lookup_fx_table(packet, &oob, i);
-			fx_table_counts[i].lookup++;
-			if(flow >= 0){
-				fx_table_counts[i].matched++;
-				fx_flow_counts[flow].packet_count++;
-				fx_flow_counts[flow].byte_count += packet->length;
-				fx_flow_timeouts[flow].update = sys_get_ms();
-				execute_ofp10_flow(packet, &oob, flow);
-			}
+		uint8_t table = 0;
+		if(switch_negotiated() == false){
+			table = 1;
+		}
+		int flow = lookup_fx_table(packet, &oob, table);
+		fx_table_counts[table].lookup++;
+		if(flow >= 0){
+			fx_table_counts[table].matched++;
+			fx_flow_counts[flow].packet_count++;
+			fx_flow_counts[flow].byte_count += packet->length;
+			fx_flow_timeouts[flow].update = sys_get_ms();
+			execute_ofp10_flow(packet, &oob, flow);
 		}
 		// XXX: packet-in
 	}else if(OF_Version == 4){

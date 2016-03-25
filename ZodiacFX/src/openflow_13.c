@@ -676,67 +676,64 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 			case OFPMP13_PORT_STATS:
 			if(ofp_rx_length(self) < 8 || ofp_tx_room(self) < 16+112){
 				return OFP_NOOP;
+			}else if(length != 16+8){
+				return ofp13_write_mp_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_LEN);
 			}else{
-				if(self->mp_out_index < 0){
-					self->mp_out_index = 0;
-				}
-				if(length != 16+8){
-					return ofp13_write_mp_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_LEN);
-				}
 				struct ofp13_port_stats_request hint;
-				self->mpreq_pos += ofp_rx_read(self, &hint, 8);
-				
-				uint32_t port_no = ntohl(hint.port_no);
-				if(port_no <= OFPP13_MAX || port_no == OFPP13_ANY){
-					uint16_t capacity = ofp_tx_room(self);
-					if(capacity > OFP_BUFFER_LEN){
-						capacity = OFP_BUFFER_LEN;
-					}
-					uint16_t unitlength = fill_ofp13_port_stats(hint.port_no,
-						&self->mp_out_index, ofp_buffer+16, capacity-16);
-					mpres.flags = 0;
-					if(self->mp_out_index >= 0){
-						mpres.flags = htons(OFPMPF13_REPLY_MORE);
-					}
-					mpres.header.length = htons(16+unitlength);
-					memcpy(ofp_buffer, &mpres, 16);
-					ofp_tx_write(self, ofp_buffer, 16+unitlength);
+				if(self->mp_out_index < 0){
+					pbuf_copy_partial(self->rbuf, &hint, 8, self->rskip);
+					self->mpreq_pos += ofp_rx_read(self, self->mp_in, 8);
+					self->mp_out_index = 0;
 				} else {
-					return ofp13_write_mp_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_PORT);
+					// restore
+					memcpy(&hint, self->mp_in, 8);
 				}
+				
+				uint16_t capacity = ofp_tx_room(self);
+				if(capacity > OFP_BUFFER_LEN){
+					capacity = OFP_BUFFER_LEN;
+				}
+				uint16_t unitlength = fill_ofp13_port_stats(hint.port_no,
+					&self->mp_out_index, ofp_buffer+16, capacity-16);
+				mpres.flags = 0;
+				if(self->mp_out_index >= 0){
+					mpres.flags = htons(OFPMPF13_REPLY_MORE);
+				}
+				mpres.header.length = htons(16+unitlength);
+				memcpy(ofp_buffer, &mpres, 16);
+				ofp_tx_write(self, ofp_buffer, 16+unitlength);
 			}
 			break;
 			
 			case OFPMP13_GROUP:
 			if(ofp_rx_length(self)<8 || ofp_tx_room(self)<56){
 				return OFP_NOOP;
+			}else if(length != 16+8){
+				return ofp13_write_mp_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_LEN);
 			}else{
-				if(self->mp_out_index < 0){
-					self->mp_out_index = 0;
-				}
-				if(length != 16+8){
-					return ofp13_write_mp_error(self, OFPET13_BAD_REQUEST, OFPBRC13_BAD_LEN);
-				}
 				struct ofp13_group_stats_request hint;
-				self->mpreq_pos += ofp_rx_read(self, &hint, 8);
-				
-				if(ntohl(hint.group_id) <= OFPG13_MAX || hint.group_id == htonl(OFPG13_ALL)){
-					uint16_t capacity = ofp_tx_room(self);
-					if(capacity > OFP_BUFFER_LEN){
-						capacity = OFP_BUFFER_LEN;
-					}
-					uint16_t unitlength = fill_ofp13_group_stats(hint.group_id,
-						&self->mp_out_index, ofp_buffer+16, capacity-16);
-					mpres.flags = 0;
-					if(self->mp_out_index >= 0){
-						mpres.flags = htons(OFPMPF13_REPLY_MORE);
-					}
-					mpres.header.length = htons(16+unitlength);
-					memcpy(ofp_buffer, &mpres, 16);
-					ofp_tx_write(self, ofp_buffer, 16+unitlength);
-				}else{
-					return ofp13_write_mp_error(self, OFPET13_GROUP_MOD_FAILED, OFPGMFC13_UNKNOWN_GROUP);
+				if(self->mp_out_index < 0){
+					pbuf_copy_partial(self->rbuf, &hint, 8, self->rskip);
+					self->mpreq_pos += ofp_rx_read(self, self->mp_in, 8);
+					self->mp_out_index = 0;
+				} else {
+					// restore
+					memcpy(&hint, self->mp_in, 8);
 				}
+				
+				uint16_t capacity = ofp_tx_room(self);
+				if(capacity > OFP_BUFFER_LEN){
+					capacity = OFP_BUFFER_LEN;
+				}
+				uint16_t unitlength = fill_ofp13_group_stats(hint.group_id,
+					&self->mp_out_index, ofp_buffer+16, capacity-16);
+				mpres.flags = 0;
+				if(self->mp_out_index >= 0){
+					mpres.flags = htons(OFPMPF13_REPLY_MORE);
+				}
+				mpres.header.length = htons(16+unitlength);
+				memcpy(ofp_buffer, &mpres, 16);
+				ofp_tx_write(self, ofp_buffer, 16+unitlength);
 			}
 			break;
 
@@ -822,9 +819,9 @@ enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb *self){
 			}
 			break;
 		}
-		if (self->mpreq_pos >= length && (ntohs(mpres.flags) & OFPMPF13_REQ_MORE) == 0){
+		if (self->mpreq_pos >= length && (ntohs(mpres.flags) & OFPMPF13_REPLY_MORE) == 0){
 			self->mpreq_pos = 0;
-			if(mpreq.flags & ntohs(OFPMPF13_REQ_MORE)==0){
+			if((mpreq.flags & ntohs(OFPMPF13_REQ_MORE)) == 0){
 				self->mpreq_on = false;
 			}
 		}
