@@ -117,7 +117,8 @@ static void watch_fx_flows(void){
 		timeout_ofp13_flows();
 		send_ofp13_flow_rem();
 	}else{
-		// TODO: ofp10 version should be placed here.
+		timeout_ofp10_flows();
+		send_ofp10_flow_rem();
 	}
 	cleanup_fx_flows();
 }
@@ -358,7 +359,9 @@ static void ofp_async(void){
 		send_ofp13_port_status();
 		check_ofp13_packet_in();
 	}else{
-		// TODO: ofp10 version should be placed here.
+		send_ofp10_flow_rem();
+		send_ofp10_port_status();
+		check_ofp10_packet_in();
 	}
 	cleanup_fx_flows();
 }
@@ -842,31 +845,8 @@ void openflow_pipeline(struct fx_packet *packet){
 */
 	
 	if(OF_Version == 1){
-		uint8_t table = 0;
-		if(switch_negotiated() == false){
-			table = 1;
-		}
-		int flow = lookup_fx_table(packet, &oob, table);
-		fx_table_counts[table].lookup++;
-		if(flow >= 0){
-			fx_table_counts[table].matched++;
-			fx_flow_counts[flow].packet_count++;
-			fx_flow_counts[flow].byte_count += packet->length;
-			fx_flow_timeouts[flow].update = sys_get_ms();
-			execute_ofp10_flow(packet, &oob, flow);
-		}
-		// XXX: packet-in
+		ofp10_pipeline(packet, &oob);
 	}else if(OF_Version == 4){
-		int flow = lookup_fx_table(packet, &oob, 0);
-		fx_table_counts[0].lookup++;
-		if(OF_Version == 4 && fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
-			// table-miss flow entry
-		} else {
-			fx_table_counts[0].matched++;
-		}
-		fx_flow_counts[flow].packet_count++;
-		fx_flow_counts[flow].byte_count += packet->length;
-		fx_flow_timeouts[flow].update = sys_get_ms();
-		execute_ofp13_flow(packet, &oob, flow);
+		ofp13_pipeline(packet, &oob);
 	}
 }

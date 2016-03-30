@@ -43,6 +43,7 @@
 #define OFPTT_ALL 0xff
 #define OFPTT_EMERG 0xfe
 #define OFP_MAX_TABLE_NAME_LEN 32
+#define OFP_MAX_PORT_NAME_LEN 16
 
 // Global variables
 extern struct zodiac_config Zodiac_Config;
@@ -105,6 +106,93 @@ static void send_ofp10_packet_in(struct ofp_packet_in base, struct fx_packet *pa
 		memcpy(ofp_buffer+4, &xid, 4);
 		ofp_tx_write(ofp, ofp_buffer, length);
 		*send_bits &= ~(1<<i);
+	}
+}
+
+static void buffered_send_ofp10_packet_in(struct fx_packet *packet, uint16_t max_len, uint8_t reason){
+	uint8_t send_bits = 0x80;
+	uint32_t buffer_id = htonl(fx_buffer_id++);
+		
+	struct ofp_packet_in base = {
+		.header = {
+			.version = 1,
+			.type = OFPT10_PACKET_IN,
+		},
+		.buffer_id = buffer_id,
+		.in_port = packet->in_port,
+		.total_len = htons(packet->length),
+		.reason = reason,
+	};
+	for(int i=0; i<MAX_CONTROLLERS; i++){
+		if(controllers[i].ofp.negotiated){
+			send_bits |= 1<<i;
+		}
+	}
+	send_ofp10_packet_in(base, packet, max_len, &send_bits);
+	if(send_bits != 0){
+		for(int i=0; i<MAX_BUFFERS; i++){
+			struct fx_packet_in *pin = fx_packet_ins+i;
+			if(pin->send_bits == 0){
+				void *data = malloc(packet->length);
+				if(data != NULL){
+					memcpy(data, packet->data, packet->length);
+						
+					pin->buffer_id = buffer_id;
+					pin->reason = reason;
+					pin->send_bits = send_bits;
+					pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
+						
+					struct fx_packet pkt = {
+						.data = data,
+						.capacity = packet->length,
+						.length = packet->length,
+						.malloced = true,
+						.in_port = packet->in_port,
+						.metadata = packet->metadata,
+						.tunnel_id = packet->tunnel_id,
+						.in_phy_port = packet->in_phy_port,
+					};
+					pin->packet = pkt;
+					
+					pin->max_len = max_len;
+				}
+				break;
+			}
+		}
+	}
+}
+
+void check_ofp10_packet_in(){
+	for(int i=0; i<MAX_BUFFERS; i++){
+		struct fx_packet_in *pin = fx_packet_ins+i;
+		if((pin->send_bits &~ 0x80) == 0){
+			continue;
+		}
+		if(pin->valid_until - sys_get_ms() > 0x80000000U){
+			if(pin->packet.malloced){
+				free(pin->packet.data);
+				pin->packet.data = NULL;
+				pin->packet.malloced = false;
+			}
+			pin->send_bits = 0;
+			continue;
+		}
+		struct ofp_packet_in msg = {
+			.header = {
+				.version = 1,
+				.type = OFPT10_PACKET_IN,
+			},
+			.buffer_id = pin->buffer_id,
+			.total_len = pin->packet.length,
+			.in_port = pin->packet.in_port,
+			.reason = pin->reason,
+		};
+		send_ofp10_packet_in(msg, &pin->packet, pin->max_len, &pin->send_bits);
+		if(pin->send_bits == 0 && pin->packet.malloced){
+			free(pin->packet.data);
+			pin->packet.data = NULL;
+			pin->packet.malloced = false;
+		}
 	}
 }
 
@@ -226,57 +314,7 @@ static bool execute_ofp10_action(struct fx_packet *packet, struct fx_packet_oob 
 					}
 				}
 			}else if(out.port == htons(OFPP_CONTROLLER)){
-				uint8_t send_bits = 0x80;
-				uint32_t buffer_id = htonl(fx_buffer_id++);
-				uint8_t reason = OFPR_ACTION;
-				
-				struct ofp_packet_in msg = {
-					.header = {
-						.version = 1,
-						.type = OFPT10_PACKET_IN,
-					},
-					.buffer_id = buffer_id,
-					.in_port = packet->in_port,
-					.total_len = htons(packet->length),
-					.reason = reason,
-				};
-				for(int i=0; i<MAX_CONTROLLERS; i++){
-					if(controllers[i].ofp.negotiated){
-						send_bits |= 1<<i;
-					}
-				}
-				send_ofp10_packet_in(msg, packet, ntohs(out.max_len), &send_bits);
-				if(send_bits != 0){
-					for(int i=0; i<MAX_BUFFERS; i++){
-						struct fx_packet_in *pin = fx_packet_ins+i;
-						if(pin->send_bits == 0){
-							void *data = malloc(packet->length);
-							if(data != NULL){
-								memcpy(data, packet->data, packet->length);
-								
-								pin->buffer_id = msg.buffer_id;
-								pin->reason = msg.reason;
-								pin->send_bits = send_bits;
-								pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
-								
-								struct fx_packet pkt = {
-									.data = data,
-									.capacity = packet->length,
-									.length = packet->length,
-									.malloced = true,
-									.in_port = packet->in_port,
-									.metadata = packet->metadata,
-									.tunnel_id = packet->tunnel_id,
-									.in_phy_port = packet->in_phy_port,
-								};
-								pin->packet = pkt;
-								
-								pin->max_len = ntohs(out.max_len);
-							}
-							break;
-						}
-					}
-				}
+				buffered_send_ofp10_packet_in(packet, ntohs(out.max_len), OFPR_ACTION);
 			} // xxx: OFPP10_TABLE
 		}
 		break;
@@ -1247,28 +1285,6 @@ int match_frame_by_tuple(const struct fx_packet *packet, const struct fx_packet_
 		}
 		score += 16;
 	}
-	if((tuple.wildcards & htonl(OFPFW_DL_VLAN)) == 0){
-		if(tuple.dl_vlan == htons(0xffff)){
-			if((oob->vlan[0] & 0x10) != 0){
-				return -1;
-			}
-		}else{
-			uint8_t vlan[2];
-			memcpy(vlan, &tuple.dl_vlan, 2);
-			if((oob->vlan[0] & 0x0F) != (vlan[0] & 0x0F) || oob->vlan[1] != vlan[1]){
-				return -1;
-			}
-		}
-		score += 12;
-	}
-	if((tuple.wildcards & htonl(OFPFW_DL_VLAN_PCP)) == 0){
-		if((oob->vlan[0] & 0x10) != 0){
-			if((oob->vlan[0]>>5) != tuple.dl_vlan_pcp){
-				return -1;
-			}
-		}
-		score += 3;
-	}
 	if((tuple.wildcards & htonl(OFPFW_DL_DST)) == 0){
 		if(memcmp(packet->data, tuple.dl_dst, OFP10_ETH_ALEN) != 0){
 			return -1;
@@ -1287,87 +1303,79 @@ int match_frame_by_tuple(const struct fx_packet *packet, const struct fx_packet_
 		}
 		score += 16;
 	}
-	if((tuple.wildcards & htonl(OFPFW_NW_PROTO)) == 0){
-		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2) != 0){
-			return -1;
+	if((oob->vlan[0] & 0x10) != 0){
+		if((tuple.wildcards & htonl(OFPFW_DL_VLAN)) == 0){
+			uint8_t vlan[2];
+			memcpy(vlan, &tuple.dl_vlan, 2);
+			if((oob->vlan[0] & 0x0F) != (vlan[0] & 0x0F) || oob->vlan[1] != vlan[1]){
+				return -1;
+			}
+			score += 12;
 		}
-		struct ip_hdr *iphdr = packet->data + oob->eth_type_offset + 2;
-		if(IPH_PROTO(iphdr) != tuple.nw_proto){
-			return -1;
+		if((tuple.wildcards & htonl(OFPFW_DL_VLAN_PCP)) == 0){
+			if((oob->vlan[0]>>5) != tuple.dl_vlan_pcp){
+				return -1;
+			}
+			score += 3;
 		}
-		score += 8;
 	}
-	if((tuple.wildcards & htonl(OFPFW_TP_SRC)) == 0){
-		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2) != 0){
-			return -1;
-		}
+	if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2) == 0){
 		struct ip_hdr *iphdr = packet->data + oob->eth_type_offset + 2;
-		if(IPH_PROTO(iphdr) == IP_PROTO_TCP){
-			struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
-			if(memcmp(&tcphdr->src, &tuple.tp_src, 2)){
-				return -1;
-			}
-		}else if(IPH_PROTO(iphdr) == IP_PROTO_UDP){
-			struct udp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
-			if(memcmp(&udphdr->src, &tuple.tp_src, 2)){
-				return -1;
-			}
-		}
-		score += 32;
-	}
-	if((tuple.wildcards & htonl(OFPFW_TP_DST)) == 0){
-		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2) != 0){
-			return -1;
-		}
-		struct ip_hdr *iphdr = packet->data + oob->eth_type_offset + 2;
-		if(IPH_PROTO(iphdr) == IP_PROTO_TCP){
-			struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
-			if(memcmp(&tcphdr->dest, &tuple.tp_dst, 2)){
-				return -1;
-			}
-		}else if(IPH_PROTO(iphdr) == IP_PROTO_UDP){
-			struct udp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
-			if(memcmp(&udphdr->dest, &tuple.tp_dst, 2)){
-				return -1;
-			}
-		}
-		score += 32;
-	}
-	if((tuple.wildcards & htonl(OFPFW_NW_SRC_MASK)) == 0){
-		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2) != 0){
-			return -1;
-		}
-		struct ip_hdr *iphdr = packet->data + oob->eth_type_offset + 2;
-		int bits = (tuple.wildcards & OFPFW_NW_SRC_MASK) >> OFPFW_NW_SRC_SHIFT;
+		int bits = (ntohl(tuple.wildcards) & OFPFW_NW_SRC_MASK) >> OFPFW_NW_SRC_SHIFT;
 		if((ntohl(iphdr->src.addr)>>bits) != (ntohl(tuple.nw_src)>>bits)){
 			return -1;
 		}
 		if(bits < 32){
 			score += 32-bits;
 		}
-	}
-	if((tuple.wildcards & htonl(OFPFW_NW_DST_MASK)) == 0){
-		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2) != 0){
-			return -1;
-		}
-		struct ip_hdr *iphdr = packet->data + oob->eth_type_offset + 2;
-		int bits = (tuple.wildcards & OFPFW_NW_DST_MASK) >> OFPFW_NW_DST_SHIFT;
+		
+		bits = (ntohl(tuple.wildcards) & OFPFW_NW_DST_MASK) >> OFPFW_NW_DST_SHIFT;
 		if((ntohl(iphdr->dest.addr)>>bits) != (ntohl(tuple.nw_dst)>>bits)){
 			return -1;
 		}
 		if(bits < 32){
 			score += 32-bits;
 		}
-	}
-	if((tuple.wildcards & htonl(OFPFW_NW_TOS)) == 0){
-		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2) != 0){
-			return -1;
+		if((tuple.wildcards & htonl(OFPFW_NW_PROTO)) == 0){
+			if(IPH_PROTO(iphdr) != tuple.nw_proto){
+				return -1;
+			}
+			score += 8;
 		}
-		struct ip_hdr *iphdr = packet->data + oob->eth_type_offset + 2;
-		if(IPH_TOS(iphdr) != tuple.nw_tos){
-			return -1;
+		if((tuple.wildcards & htonl(OFPFW_NW_TOS)) == 0){
+			if(IPH_TOS(iphdr) != tuple.nw_tos){
+				return -1;
+			}
+			score += 8;
 		}
-		score += 8;
+		if((tuple.wildcards & htonl(OFPFW_TP_SRC)) == 0){
+			if(IPH_PROTO(iphdr) == IP_PROTO_TCP){
+				struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+				if(memcmp(&tcphdr->src, &tuple.tp_src, 2)){
+					return -1;
+				}
+			}else if(IPH_PROTO(iphdr) == IP_PROTO_UDP){
+				struct udp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+				if(memcmp(&udphdr->src, &tuple.tp_src, 2)){
+					return -1;
+				}
+			}
+			score += 32;
+		}
+		if((tuple.wildcards & htonl(OFPFW_TP_DST)) == 0){
+			if(IPH_PROTO(iphdr) == IP_PROTO_TCP){
+				struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+				if(memcmp(&tcphdr->dest, &tuple.tp_dst, 2)){
+					return -1;
+				}
+			}else if(IPH_PROTO(iphdr) == IP_PROTO_UDP){
+				struct udp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+				if(memcmp(&udphdr->dest, &tuple.tp_dst, 2)){
+					return -1;
+				}
+			}
+			score += 32;
+		}
 	}
 	return score;
 }
@@ -1381,5 +1389,156 @@ void execute_ofp10_flow(struct fx_packet *packet, struct fx_packet_oob *oob, int
 			break;
 		}
 		pos += ntohs(act.len);
+	}
+}
+
+void timeout_ofp10_flows(){
+	uint32_t send_bits = 0;
+	for(int i=0; i<MAX_CONTROLLERS; i++){
+		if(controllers[i].ofp.negotiated){
+			send_bits |= 1<<i;
+		}
+	}
+	for(int i=0; i<iLastFlow; i++){
+		if((fx_flows[i].send_bits & FX_FLOW_ACTIVE) == 0){
+			// already removed
+			continue;
+		}
+		if(fx_flow_timeouts[i].hard_timeout != 0){
+			uint32_t timeout = fx_flow_timeouts[i].init + fx_flow_timeouts[i].hard_timeout;
+			if(timeout - sys_get_ms() > 0x80000000){
+				if((fx_flows[i].flags & OFPFF_SEND_FLOW_REM) != 0 ){
+					fx_flows[i].send_bits = send_bits;
+				} else {
+					fx_flows[i].send_bits = 0;
+				}
+			}
+		}
+		if(fx_flow_timeouts[i].idle_timeout != 0){
+			uint32_t timeout = fx_flow_timeouts[i].update + fx_flow_timeouts[i].idle_timeout;
+			if(timeout - sys_get_ms() > 0x80000000){
+				if((fx_flows[i].flags & OFPFF_SEND_FLOW_REM) != 0 ){
+					fx_flows[i].send_bits = send_bits;
+				} else {
+					fx_flows[i].send_bits = 0;
+				}
+			}
+		}
+	}
+}
+
+void send_ofp10_port_status(){
+	uint16_t length = sizeof(struct ofp_port_status);
+	for(int i=0; i<MAX_CONTROLLERS; i++){
+		if(controllers[i].ofp.negotiated == false){
+			continue;
+		}
+		uint8_t bits = 1<<i;
+		for(int j=0; j<4; j++){
+			uint8_t reason;
+			if((fx_ports[j].send_bits & bits) != 0){
+				if(Zodiac_Config.of_port[j] == PORT_OPENFLOW){
+					reason = OFPPR_ADD;
+				}else{
+					reason = OFPPR_DELETE;
+				}
+			}else if((fx_ports[j].send_bits_mod & bits) != 0){
+				reason = OFPPR_MODIFY;
+			}else{
+				continue;
+			}
+			if(ofp_tx_room(&controllers[i].ofp) > length){
+				struct ofp_port_status msg = {
+					.header = {
+						.version = 1,
+						.type = OFPT10_PORT_STATUS,
+						.length = htons(length),
+						.xid = htonl(controllers[i].ofp.xid++),
+					},
+					.reason = reason,
+					.desc = {
+						.port_no = htons(i+1),
+						.config = htonl(get_switch_config(j)),
+						.state = htonl(get_switch_status(j)),
+						.curr = htonl(get_switch_ofppf13_curr(j)),
+						.advertised = htonl(get_switch_ofppf13_advertised(j)),
+						.supported = htonl(	OFPPF13_COPPER | OFPPF13_PAUSE | OFPPF13_PAUSE_ASYM |OFPPF13_100MB_FD \
+							| OFPPF13_100MB_HD | OFPPF13_10MB_FD | OFPPF13_10MB_HD | OFPPF13_AUTONEG),
+						.peer = htonl(get_switch_ofppf13_peer(j)),
+					},
+				};
+				memcpy(&msg.desc.hw_addr, &Zodiac_Config.MAC_address, OFP10_ETH_ALEN);
+				snprintf(&msg.desc.name, OFP_MAX_PORT_NAME_LEN, "eth%d", i+1);
+				
+				ofp_tx_write(&controllers[i].ofp, &msg, length);
+				fx_ports[j].send_bits &= ~bits;
+				fx_ports[j].send_bits_mod &= ~bits;
+			}
+		}
+	}
+}
+
+void send_ofp10_flow_rem(){
+	for(int i=0; i<iLastFlow; i++){
+		if(fx_flows[i].send_bits == 0){
+			continue;
+		}
+		if((fx_flows[i].send_bits & FX_FLOW_ACTIVE) != 0){
+			continue;
+		}
+		uint16_t length = sizeof(struct ofp_flow_removed);
+		struct ofp_flow_removed msg = {
+			.header = {
+				.version = 1,
+				.type = OFPT10_FLOW_REMOVED,
+				.length = htons(length),
+			},
+			.cookie = fx_flows[i].cookie,
+			.priority = fx_flows[i].priority,
+			.reason = fx_flows[i].reason,
+			.duration_sec = htonl((sys_get_ms64() - fx_flow_timeouts[i].init)/1000u),
+			.duration_nsec = htonl((sys_get_ms64() - fx_flow_timeouts[i].init)%1000u * 1000000u),
+			.idle_timeout = htons(fx_flow_timeouts[i].idle_timeout),
+			.packet_count = fx_flow_counts[i].packet_count,
+			.byte_count = fx_flow_counts[i].byte_count,
+		};
+		memcpy(&msg.match, &fx_flows[i].tuple, sizeof(struct ofp_match));
+		
+		for(int j=0; j<MAX_CONTROLLERS; j++){
+			uint8_t bit = 1<<i;
+			if(controllers[j].ofp.tcp == NULL){
+				fx_flows[i].send_bits &= ~bit;
+			}
+			if((fx_flows[i].send_bits & bit) == 0){
+				continue;
+			}
+			if(controllers[j].ofp.negotiated){
+				struct ofp_pcb *ofp = &controllers[j].ofp;
+				if(ofp_tx_room(ofp) > length){
+					msg.header.xid = htons(ofp->xid++);
+					memcpy(ofp_buffer, &msg, length);
+					ofp_tx_write(ofp, ofp_buffer, length);
+					fx_flows[i].send_bits &= ~bit;
+				}
+			}
+		}
+	}
+}
+
+void ofp10_pipeline(struct fx_packet *packet, struct fx_packet_oob *oob){
+	uint8_t table = 0;
+	if(switch_negotiated() == false){
+		table = 1;
+	}
+	int flow = lookup_fx_table(packet, oob, table);
+	fx_table_counts[table].lookup++;
+	if(flow >= 0){
+		fx_table_counts[table].matched++;
+		fx_flow_counts[flow].packet_count++;
+		fx_flow_counts[flow].byte_count += packet->length;
+		fx_flow_timeouts[flow].update = sys_get_ms();
+		execute_ofp10_flow(packet, oob, flow);
+	} else {
+		buffered_send_ofp10_packet_in(packet, fx_switch.miss_send_len, OFPR_NO_MATCH);
 	}
 }

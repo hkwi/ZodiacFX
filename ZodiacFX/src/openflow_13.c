@@ -2018,6 +2018,70 @@ static void send_ofp13_packet_in(struct ofp13_packet_in base, struct fx_packet *
 	}
 }
 
+static void buffered_send_ofp13_packet_in(struct fx_packet *packet, uint16_t max_len, uint8_t reason, uint8_t table_id, uint64_t cookie){
+	uint8_t send_bits = 0;
+	uint32_t buffer_id = htonl(OFP13_NO_BUFFER);
+	if(max_len != OFPCML13_NO_BUFFER){
+		send_bits |= 0x80;
+		buffer_id = htonl(fx_buffer_id++);
+	}
+	
+	struct ofp13_packet_in msg = {
+		.header = {
+			.version = 4,
+			.type = OFPT13_PACKET_IN,
+		},
+		.buffer_id = buffer_id,
+		.total_len = htons(packet->length),
+		.table_id = table_id,
+		.reason = reason,
+		.cookie = cookie,
+		.match = {
+			.type = htons(OFPMT13_OXM),
+		}
+	};
+	
+	for(int i=0; i<MAX_CONTROLLERS; i++){
+		if(controllers[i].ofp.negotiated){
+			send_bits |= 1<<i;
+		}
+	}
+	send_ofp13_packet_in(msg, packet, max_len, &send_bits);
+	if(send_bits != 0){
+		for(int i=0; i<MAX_BUFFERS; i++){
+			struct fx_packet_in *pin = fx_packet_ins+i;
+			if(pin->send_bits == 0){
+				void *data = malloc(packet->length);
+				if(data != NULL){
+					memcpy(data, packet->data, packet->length);
+					
+					pin->buffer_id = msg.buffer_id;
+					pin->reason = msg.reason;
+					pin->table_id = msg.table_id;
+					pin->cookie = msg.cookie;
+					pin->send_bits = send_bits;
+					pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
+					
+					struct fx_packet pkt = {
+						.data = data,
+						.capacity = packet->length,
+						.length = packet->length,
+						.malloced = true,
+						.in_port = packet->in_port,
+						.metadata = packet->metadata,
+						.tunnel_id = packet->tunnel_id,
+						.in_phy_port = packet->in_phy_port,
+					};
+					pin->packet = pkt;
+					
+					pin->max_len = max_len;
+				}
+				break;
+			}
+		}
+	}
+}
+
 void check_ofp13_packet_in(){
 	for(int i=0; i<MAX_BUFFERS; i++){
 		struct fx_packet_in *pin = fx_packet_ins+i;
@@ -2048,7 +2112,7 @@ void check_ofp13_packet_in(){
 			}
 		};
 		
-		send_ofp13_packet_in(msg, &pin->packet, ntohs(pin->max_len), &pin->send_bits);
+		send_ofp13_packet_in(msg, &pin->packet, pin->max_len, &pin->send_bits);
 		if(pin->send_bits == 0 && pin->packet.malloced){
 			free(pin->packet.data);
 			pin->packet.data = NULL;
@@ -2420,13 +2484,6 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 					}
 				}
 			}else if(out.port == htonl(OFPP13_CONTROLLER)){
-				uint8_t send_bits = 0;
-				uint32_t buffer_id = htonl(OFP13_NO_BUFFER);
-				if(out.max_len != htons(OFPCML13_NO_BUFFER)){
-					send_bits |= 0x80;
-					buffer_id = htonl(fx_buffer_id++);
-				}
-				
 				uint8_t reason = OFPR13_ACTION;
 				uint8_t table_id = 0;
 				uint64_t cookie = 0xffffffffffffffffULL;
@@ -2438,61 +2495,7 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 					table_id = fx_flows[flow].table_id;
 					cookie = fx_flows[flow].cookie;
 				}
-				
-				struct ofp13_packet_in msg = {
-					.header = {
-						.version = 4,
-						.type = OFPT13_PACKET_IN,
-					},
-					.buffer_id = buffer_id,
-					.total_len = htons(packet->length),
-					.table_id = table_id,
-					.reason = reason,
-					.cookie = cookie,
-					.match = {
-						.type = htons(OFPMT13_OXM),
-					}
-				};
-				
-				for(int i=0; i<MAX_CONTROLLERS; i++){
-					if(controllers[i].ofp.negotiated){
-						send_bits |= 1<<i;
-					}
-				}
-				send_ofp13_packet_in(msg, packet, ntohs(out.max_len), &send_bits);
-				if(send_bits != 0){
-					for(int i=0; i<MAX_BUFFERS; i++){
-						struct fx_packet_in *pin = fx_packet_ins+i;
-						if(pin->send_bits == 0){
-							void *data = malloc(packet->length);
-							if(data != NULL){
-								memcpy(data, packet->data, packet->length);
-								
-								pin->buffer_id = msg.buffer_id;
-								pin->reason = msg.reason;
-								pin->table_id = msg.table_id;
-								pin->cookie = msg.cookie;
-								pin->send_bits = send_bits;
-								pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
-								
-								struct fx_packet pkt = {
-									.data = data,
-									.capacity = packet->length,
-									.length = packet->length,
-									.malloced = true,
-									.in_port = packet->in_port,
-									.metadata = packet->metadata,
-									.tunnel_id = packet->tunnel_id,
-									.in_phy_port = packet->in_phy_port,
-								};
-								pin->packet = pkt;
-								
-								pin->max_len = ntohs(out.max_len);
-							}
-							break;
-						}
-					}
-				}
+				buffered_send_ofp13_packet_in(packet, ntohs(out.max_len), reason, table_id, cookie);
 			} // xxx: OFPP13_TABLE
 		}
 		break;
@@ -2795,13 +2798,6 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 			} // TODO: IPv6
 
 			if(notify){
-				uint8_t send_bits = 0;
-				uint64_t buffer_id = htonl(OFP13_NO_BUFFER);
-				if(fx_switch.miss_send_len != OFPCML13_NO_BUFFER){
-					send_bits |= 0x80;
-					buffer_id = htonl(fx_buffer_id++);
-				}
-		
 				uint8_t table_id = 0;
 				uint8_t reason = OFPR13_INVALID_TTL;
 				uint64_t cookie = 0xffffffffffffffffULL; // openvswitch does this
@@ -2809,62 +2805,7 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 					table_id = fx_flows[flow].table_id;
 					cookie = fx_flows[flow].cookie;
 				}
-
-				struct ofp13_packet_in msg = {
-					.header = {
-						.version = 4,
-						.type = OFPT13_PACKET_IN,
-					},
-					.buffer_id = buffer_id,
-					.total_len = htons(packet->length),
-					.table_id = table_id,
-					.reason = reason,
-					.cookie = cookie,
-					.match = {
-						.type = OFPMT13_OXM,
-					}
-				};
-		
-				for(int i=0; i<MAX_CONTROLLERS; i++){
-					if(controllers[i].ofp.negotiated){
-						send_bits |= 1<<i;
-					}
-				}
-				send_ofp13_packet_in(msg, packet, fx_switch.miss_send_len, &send_bits);
-				if(send_bits != 0){
-					for(int i=0; i<MAX_BUFFERS; i++){
-						struct fx_packet_in *pin = fx_packet_ins+i;
-						if(pin->send_bits == 0){
-							uint8_t *data = malloc(packet->length);
-							if(data != NULL){
-								pin->send_bits = send_bits;
-								pin->valid_until = sys_get_ms() + BUFFER_TIMEOUT;
-						
-								pin->buffer_id = buffer_id;
-								pin->reason = reason;
-								pin->table_id = table_id;
-								pin->cookie = cookie;
-						
-								struct fx_packet pkt = {
-									.data = data,
-									.length = packet->length,
-									.capacity = packet->length,
-									.malloced = true,
-									.in_port = packet->in_port,
-									.metadata = packet->metadata,
-									.tunnel_id = packet->tunnel_id,
-									.in_phy_port = packet->in_phy_port,
-								};
-								pin->packet = pkt;
-						
-								pin->max_len = fx_switch.miss_send_len;
-								} else {
-								// out of memory. silent drop.
-							}
-							break;
-						}
-					}
-				}
+				buffered_send_ofp13_packet_in(packet, fx_switch.miss_send_len, reason, table_id, cookie);
 			}
 		}
 		break;
@@ -3425,3 +3366,16 @@ void send_ofp13_flow_rem(){
 	}
 }
 
+void ofp13_pipeline(struct fx_packet *packet, struct fx_packet_oob *oob){
+	int flow = lookup_fx_table(packet, &oob, 0);
+	fx_table_counts[0].lookup++;
+	if(OF_Version == 4 && fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
+		// table-miss flow entry
+	} else {
+		fx_table_counts[0].matched++;
+	}
+	fx_flow_counts[flow].packet_count++;
+	fx_flow_counts[flow].byte_count += packet->length;
+	fx_flow_timeouts[flow].update = sys_get_ms();
+	execute_ofp13_flow(packet, &oob, flow);
+}

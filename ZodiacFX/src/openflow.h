@@ -230,6 +230,8 @@ uint16_t ofp_set_error(const void*, uint16_t, uint16_t);
 
 
 // openflow message handling
+void ofp10_pipeline(struct fx_packet*, struct fx_packet_oob*);
+void ofp13_pipeline(struct fx_packet*, struct fx_packet_oob*);
 enum ofp_pcb_status ofp_write_error(struct ofp_pcb*, uint16_t, uint16_t);
 enum ofp_pcb_status ofp13_multipart_complete(struct ofp_pcb*);
 enum ofp_pcb_status ofp10_multipart_complete(struct ofp_pcb*);
@@ -244,9 +246,13 @@ void execute_ofp13_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
 void execute_ofp10_flow(struct fx_packet*, struct fx_packet_oob*, int flow);
 
 // async
+void send_ofp10_port_status(void);
 void send_ofp13_port_status(void);
+void send_ofp10_flow_rem(void);
 void send_ofp13_flow_rem(void);
+void timeout_ofp10_flows(void);
 void timeout_ofp13_flows(void);
+void check_ofp10_packet_in(void);
 void check_ofp13_packet_in(void);
 
 static const uint8_t ETH_TYPE_VLAN[] = { 0x81, 0x00 };
