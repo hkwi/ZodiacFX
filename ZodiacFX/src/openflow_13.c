@@ -3367,7 +3367,7 @@ void send_ofp13_flow_rem(){
 }
 
 void ofp13_pipeline(struct fx_packet *packet, struct fx_packet_oob *oob){
-	int flow = lookup_fx_table(packet, &oob, 0);
+	int flow = lookup_fx_table(packet, oob, 0);
 	fx_table_counts[0].lookup++;
 	if(OF_Version == 4 && fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
 		// table-miss flow entry
@@ -3377,5 +3377,5 @@ void ofp13_pipeline(struct fx_packet *packet, struct fx_packet_oob *oob){
 	fx_flow_counts[flow].packet_count++;
 	fx_flow_counts[flow].byte_count += packet->length;
 	fx_flow_timeouts[flow].update = sys_get_ms();
-	execute_ofp13_flow(packet, &oob, flow);
+	execute_ofp13_flow(packet, oob, flow);
 }
