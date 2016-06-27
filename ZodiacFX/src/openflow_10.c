@@ -36,8 +36,8 @@
 #include "timers.h"
 #include "of_helper.h"
 #include "lwip/tcp.h"
-#include "ipv4/lwip/ip.h"
-#include "lwip/tcp_impl.h"
+#include "lwip/ip.h"
+#include "lwip/priv/tcp_priv.h"
 #include "lwip/udp.h"
 
 #define OFPTT_ALL 0xff

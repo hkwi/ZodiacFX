@@ -172,6 +172,12 @@
  */
 #define PBUF_POOL_BUFSIZE               GMAC_FRAME_LENTGH_MAX
 
+
+
+#define LWIP_IPV4 1
+#define LWIP_IPV6 1
+#define LWIP_RAND rand
+
 /*
    ----------------------------------
    ---------- DHCP options ----------

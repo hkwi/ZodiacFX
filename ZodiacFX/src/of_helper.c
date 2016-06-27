@@ -34,11 +34,11 @@
 #include "openflow.h"
 #include "of_helper.h"
 #include "lwip/tcp.h"
-#include "ipv4/lwip/ip.h"
-#include "ipv4/lwip/icmp.h"
-#include "ipv4/lwip/inet_chksum.h"
-#include "ipv4/lwip/ip_addr.h"
-#include "lwip/tcp_impl.h"
+#include "lwip/ip.h"
+#include "lwip/icmp.h"
+#include "lwip/inet_chksum.h"
+#include "lwip/ip_addr.h"
+#include "lwip/priv/tcp_priv.h"
 #include "lwip/udp.h"
 #include "switch.h"
 
@@ -58,10 +58,10 @@ uint32_t packet_hash(const void *data, uint16_t length){
 
 void set_csum_tp_zero(void *data, uint16_t length, uint16_t iphdr_offset){
 	struct ip_hdr *iphdr = (void*)((uintptr_t)data + iphdr_offset);
-	struct ip_addr src = {
+	struct ip4_addr src = {
 		.addr = iphdr->src.addr,
 	};
-	struct ip_addr dst = {
+	struct ip4_addr dst = {
 		.addr = iphdr->dest.addr,
 	};
 	uint16_t payload_offset = iphdr_offset + IPH_HL(iphdr)*4;
@@ -92,10 +92,10 @@ void set_csum_tp_zero(void *data, uint16_t length, uint16_t iphdr_offset){
 void set_ip_checksum(void *p_uc_data, uint16_t packet_size, uint16_t iphdr_offset)
 {
 	struct ip_hdr *iphdr = (void*)((uintptr_t)p_uc_data + iphdr_offset);
-	struct ip_addr src = {
+	struct ip4_addr src = {
 		.addr = iphdr->src.addr,
 	};
-	struct ip_addr dst = {
+	struct ip4_addr dst = {
 		.addr = iphdr->dest.addr,
 	};
 	uint16_t payload_offset = iphdr_offset + IPH_HL(iphdr)*4;

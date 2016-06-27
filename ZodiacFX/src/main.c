@@ -142,7 +142,7 @@ int main (void)
 	
 	loadConfig(); // Load Config
 	
-	ip_addr_t x_ip_addr, x_net_mask, x_gateway;
+	ip4_addr_t x_ip_addr, x_net_mask, x_gateway;
 	IP4_ADDR(&x_ip_addr, Zodiac_Config.IP_address[0], Zodiac_Config.IP_address[1],Zodiac_Config.IP_address[2], Zodiac_Config.IP_address[3]);
 	IP4_ADDR(&x_net_mask, Zodiac_Config.netmask[0], Zodiac_Config.netmask[1],Zodiac_Config.netmask[2], Zodiac_Config.netmask[3]);
 	IP4_ADDR(&x_gateway, Zodiac_Config.gateway_address[0], Zodiac_Config.gateway_address[1],Zodiac_Config.gateway_address[2], Zodiac_Config.gateway_address[3]);

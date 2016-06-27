@@ -32,8 +32,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <inttypes.h>
-#include <lwip/tcp.h>
-#include <lwip/tcp_impl.h>
+#include "lwip/tcp.h"
+#include "lwip/priv/tcp_priv.h"
 #include <lwip/udp.h>
 #include <netif/etharp.h>
 #include "command.h"

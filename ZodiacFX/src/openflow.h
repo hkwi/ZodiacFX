@@ -68,7 +68,7 @@ struct ofp_pcb {
 #define MAX_CONTROLLERS 2
 
 struct controller {
-	struct ip_addr addr;
+	struct ip4_addr addr;
 	struct ofp_pcb ofp;
 };
 
