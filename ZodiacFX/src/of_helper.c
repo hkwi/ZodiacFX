@@ -104,16 +104,12 @@ void set_ip_checksum(void *p_uc_data, uint16_t packet_size, uint16_t iphdr_offse
 	if (IPH_PROTO(iphdr) == IP_PROTO_TCP) {
 		struct tcp_hdr *tcphdr = (void*)((uintptr_t)p_uc_data + payload_offset);
 		tcphdr->chksum = 0;
-		tcphdr->chksum = inet_chksum_pseudo(p, &src, &dst, 
-			IP_PROTO_TCP,
-			packet_size - payload_offset);
+		tcphdr->chksum = inet_chksum_pseudo(p, IP_PROTO_TCP, packet_size - payload_offset, &src, &dst);
 	}
 	if (IPH_PROTO(iphdr) == IP_PROTO_UDP) {
 		struct udp_hdr *udphdr = (void*)((uintptr_t)p_uc_data + payload_offset);
 		udphdr->chksum = 0;
-		udphdr->chksum = inet_chksum_pseudo(p, &src, &dst,
-			IP_PROTO_UDP,
-			packet_size - payload_offset);
+		udphdr->chksum = inet_chksum_pseudo(p, IP_PROTO_UDP, packet_size - payload_offset, &src, &dst);
 	}
 	if (IPH_PROTO(iphdr) == IP_PROTO_ICMP) {
 		struct icmp_echo_hdr *icmphdr = (void*)((uintptr_t)p_uc_data + payload_offset);

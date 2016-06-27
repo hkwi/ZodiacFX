@@ -64,14 +64,14 @@ struct fx_switch_config fx_switch = {
  */
 char ofp_buffer[OFP_BUFFER_LEN] = {0};
 
-struct fx_port fx_ports[MAX_PORTS] = {0};
-struct fx_port_count fx_port_counts[MAX_PORTS] = {0};
+struct fx_port fx_ports[MAX_PORTS] = {{0}};
+struct fx_port_count fx_port_counts[MAX_PORTS] = {{0}};
 
-struct fx_table_count fx_table_counts[MAX_TABLES] = {0};
-struct fx_table_feature fx_table_features[MAX_TABLES] = {0};
+struct fx_table_count fx_table_counts[MAX_TABLES] = {{0}};
+struct fx_table_feature fx_table_features[MAX_TABLES] = {{0}};
 
 uint32_t fx_buffer_id = 0; // incremental
-struct fx_packet_in fx_packet_ins[MAX_BUFFERS] = {0};
+struct fx_packet_in fx_packet_ins[MAX_BUFFERS] = {{0}};
 
 struct fx_flow fx_flows[MAX_FLOWS] = {0};
 struct fx_flow_timeout fx_flow_timeouts[MAX_FLOWS] = {0};
@@ -80,10 +80,10 @@ struct fx_flow_count fx_flow_counts[MAX_FLOWS] = {0};
 struct fx_meter_band fx_meter_bands[MAX_METER_BANDS] = {0}; // excluding slowpath, controller
 
 int iLastGroup = 0;
-struct fx_group fx_groups[MAX_GROUPS] = {0};
-struct fx_group_count fx_group_counts[MAX_GROUPS] = {0};
-struct fx_group_bucket fx_group_buckets[MAX_GROUP_BUCKETS] = {0};
-struct fx_group_bucket_count fx_group_bucket_counts[MAX_GROUP_BUCKETS] = {0};
+struct fx_group fx_groups[MAX_GROUPS] = {{0}};
+struct fx_group_count fx_group_counts[MAX_GROUPS] = {{0}};
+struct fx_group_bucket fx_group_buckets[MAX_GROUP_BUCKETS] = {{0}};
+struct fx_group_bucket_count fx_group_bucket_counts[MAX_GROUP_BUCKETS] = {{0}};
 
 static void cleanup_fx_flows(void){
 	int found;

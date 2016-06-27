@@ -304,7 +304,7 @@ static bool execute_ofp10_action(struct fx_packet *packet, struct fx_packet_oob 
 				if(disable_ofp_pipeline == false){
 					uint8_t p = 0;
 					for(uint32_t i=0; i<MAX_PORTS; i++){
-						if(Zodiac_Config.of_port[i]==PORT_OPENFLOW && i != ntohs(in_port)-1){
+						if(Zodiac_Config.of_port[i]==PORT_OPENFLOW && i != (uint32_t)ntohs(in_port)-1){
 							p |= 1<<i;
 							fx_port_counts[i].tx_packets++;
 						}
@@ -1467,8 +1467,8 @@ void send_ofp10_port_status(){
 						.peer = htonl(get_switch_ofppf13_peer(j)),
 					},
 				};
-				memcpy(&msg.desc.hw_addr, &Zodiac_Config.MAC_address, OFP10_ETH_ALEN);
-				snprintf(&msg.desc.name, OFP_MAX_PORT_NAME_LEN, "eth%d", i+1);
+				memcpy(msg.desc.hw_addr, &Zodiac_Config.MAC_address, OFP10_ETH_ALEN);
+				snprintf(msg.desc.name, OFP_MAX_PORT_NAME_LEN, "eth%d", i+1);
 				
 				ofp_tx_write(&controllers[i].ofp, &msg, length);
 				fx_ports[j].send_bits &= ~bits;
