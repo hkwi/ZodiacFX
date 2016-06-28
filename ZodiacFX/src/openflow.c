@@ -40,6 +40,8 @@
 #include "lwip/err.h"
 #include "timers.h"
 
+#define IP_PROTO_SCTP 132
+
 // Global variables
 extern struct zodiac_config Zodiac_Config;
 
@@ -821,6 +823,52 @@ void sync_oob(struct fx_packet *packet, struct fx_packet_oob *oob){
 		}
 	}
 	oob->eth_type_offset = offset;
+	
+#ifndef IP6_NEXTH_ESP
+#define IP6_NEXTH_ESP 50 // RFC4303
+#endif
+#ifndef IP6_NEXTH_AUTH
+#define IP6_NEXTH_AUTH 51 // RFC4302
+#endif
+	if(memcmp(data+offset, ETH_TYPE_IPV6, 2)==0){
+		uint16_t exthdr = 0;
+		struct ip6_hdr *hdr = (void*)(data+offset+2);
+		
+		uint8_t *end = data + packet->length;
+		uint16_t plen = IP6H_PLEN(hdr);
+		if(plen != 0){
+			*end = data+offset+2+plen;
+		}
+		
+		uint8_t nh = IP6H_NEXTH(hdr);
+		uint8_t *h = data+offset+2+40;
+		while(h < end){
+			// TODO: check for OFPIEH_UNSEQ, OFPIEH_UNREP
+			if(nh == IP6_NEXTH_HOPBYHOP){
+				exthdr |= OFPIEH13_HOP;
+			}else if(nh == IP6_NEXTH_ROUTING){
+				exthdr |= OFPIEH13_ROUTER;
+			}else if(nh == IP6_NEXTH_FRAGMENT){
+				exthdr |= OFPIEH13_FRAG;
+			}else if(nh == IP6_NEXTH_DESTOPTS){
+				exthdr |= OFPIEH13_DEST;
+			}else if(nh == IP6_NEXTH_ESP){
+				exthdr |= OFPIEH13_ESP;
+			}else if(nh == IP6_NEXTH_AUTH){
+				exthdr |= OFPIEH13_AUTH;
+			}else{
+				break;
+			}
+			nh = *h;
+			h += (*(h+1) + 1)*8;
+		}
+		if(h == data+offset+2+40){
+			exthdr |= OFPIEH13_NONEXT;
+		}
+		oob->ipv6_exthdr = exthdr;
+		oob->ipv6_tp_type = nh;
+		oob->ipv6_tp_offset = h - data;
+	}
 }
 
 void openflow_pipeline(struct fx_packet *packet){

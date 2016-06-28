@@ -1597,7 +1597,10 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 						return -1;
 					}
 				} else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return -1; // TODO
+					struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if(IP6H_TC(hdr)>>2 != pos[4]){
+						return -1;
+					}
 				} else {
 					return -1;
 				}
@@ -1610,7 +1613,25 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 						return -1;
 					}
 				} else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return -1; // TODO
+					struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if((IP6H_TC(hdr)&0x03) != pos[4]){
+						return -1;
+					}
+				} else {
+					return -1;
+				}
+				break;
+
+				case OFPXMT13_OFB_IP_PROTO:
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
+					struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if(IPH_PROTO(hdr) != pos[4]){
+						return -1;
+					}
+				} else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+					if(oob->ipv6_tp_type != pos[4]){
+						return -1;
+					}
 				} else {
 					return -1;
 				}
@@ -1665,7 +1686,7 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 				case OFPXMT13_OFB_TCP_SRC:
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
 					struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
-					if(IPH_PROTO(iphdr)!=6){
+					if(IPH_PROTO(iphdr) != IP_PROTO_TCP){
 						return -1;
 					}
 					struct tcp_hdr *tcphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
@@ -1673,7 +1694,14 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 						return -1;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return -1; // TODO
+					struct ip6_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if(oob->ipv6_tp_type != IP_PROTO_TCP){
+						return -1;
+					}
+					struct tcp_hdr *tcphdr = packet->data + oob->ipv6_tp_offset;
+					if(memcmp(&tcphdr->src, pos+4, 2) != 0){
+						return -1;
+					}
 				}else{
 					return -1;
 				}
@@ -1690,7 +1718,14 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 						return -1;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return -1; // TODO
+					struct ip6_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if(oob->ipv6_tp_type != IP_PROTO_TCP){
+						return -1;
+					}
+					struct tcp_hdr *tcphdr = packet->data + oob->ipv6_tp_offset;
+					if(memcmp(&tcphdr->dest, pos+4, 2) != 0){
+						return -1;
+					}
 				}else{
 					return -1;
 				}
@@ -1702,12 +1737,19 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 					if(IPH_PROTO(iphdr)!=17){
 						return -1;
 					}
-					struct tcp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+					struct udp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
 					if(memcmp(&udphdr->src, pos+4, 2) != 0){
 						return -1;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return -1; // TODO
+					struct ip6_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if(oob->ipv6_tp_type != IP_PROTO_UDP){
+						return -1;
+					}
+					struct udp_hdr *udphdr = packet->data + oob->ipv6_tp_offset;
+					if(memcmp(&udphdr->src, pos+4, 2) != 0){
+						return -1;
+					}
 				}else{
 					return -1;
 				}
@@ -1719,20 +1761,70 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 					if(IPH_PROTO(iphdr)!=17){
 						return -1;
 					}
-					struct tcp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+					struct udp_hdr *udphdr = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
 					if(memcmp(&udphdr->dest, pos+4, 2) != 0){
 						return -1;
 					}
 				}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-					return -1; // TODO
+					struct ip6_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if(oob->ipv6_tp_type != IP_PROTO_UDP){
+						return -1;
+					}
+					struct udp_hdr *udphdr = packet->data + oob->ipv6_tp_offset;
+					if(memcmp(&udphdr->dest, pos+4, 2) != 0){
+						return -1;
+					}
 				}else{
 					return -1;
 				}
 				break;
 				
-				// SCTP_SRC
-				// SCTP_DST
-				
+				case OFPXMT13_OFB_SCTP_SRC:
+				{
+					uint8_t *sctp = NULL;
+					if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
+						struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
+						if(IPH_PROTO(iphdr) != 132){
+							return -1;
+						}
+						sctp = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+					}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+						if(oob->ipv6_tp_type != 132){ // IP_PROTO_SCTP
+							return -1;
+						}
+						sctp = packet->data + oob->ipv6_tp_offset;
+					}else{
+						return -1;
+					}
+					if(memcmp(sctp, pos+4, 2) != 0){
+						return -1;
+					}
+				}
+				break;
+
+				case OFPXMT13_OFB_SCTP_DST:
+				{
+					uint8_t *sctp = NULL;
+					if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
+						struct ip_hdr *iphdr = (void*)(packet->data + oob->eth_type_offset + 2);
+						if(IPH_PROTO(iphdr) != 132){
+							return -1;
+						}
+						sctp = (void*)(packet->data + oob->eth_type_offset + 2 + IPH_HL(iphdr) * 4);
+					}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+						if(oob->ipv6_tp_type != 132){ // IP_PROTO_SCTP
+							return -1;
+						}
+						sctp = packet->data + oob->ipv6_tp_offset;
+					}else{
+						return -1;
+					}
+					if(memcmp(sctp+2, pos+4, 2) != 0){
+						return -1;
+					}
+				}
+				break;
+
 				case OFPXMT13_OFB_ICMPV4_TYPE:
 				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)!=0){
 					return -1;
@@ -1865,7 +1957,188 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 					}
 				}
 				break;
-				
+
+				case OFPXMT13_OFB_IPV6_SRC:
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)!=0){
+					return -1;
+				}else{
+					struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if(has_mask){
+						uint8_t *addr = (uint8_t*)(&hdr->src.addr[0]);
+						for(int i=0; i<16; i++){
+							if((addr[i] & pos[20+i]) != pos[4+i]){
+								return -1;
+							}
+						}
+						count += bits_on(pos+20, 16);
+					}else{
+						for(int i=0; i<4; i++){
+							if(memcmp(&hdr->src.addr[i], pos+4+4*i, 4) != 0 ){
+								return -1;
+							}
+						}
+						count += 128;
+					}
+				}
+				break;
+
+				case OFPXMT13_OFB_IPV6_DST:
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)!=0){
+					return -1;
+				}else{
+					struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					if(has_mask){
+						uint8_t *addr = (uint8_t*)(&hdr->dest.addr[0]);
+						for(int i=0; i<16; i++){
+							if((addr[i] & pos[20+i]) != pos[4+i]){
+								return -1;
+							}
+						}
+						count += bits_on(pos+20, 16);
+					}else{
+						for(int i=0; i<4; i++){
+							if(memcmp(&hdr->dest.addr[i], pos+4+4*i, 4) != 0 ){
+								return -1;
+							}
+						}
+						count += 128;
+					}
+				}
+				break;
+
+				case OFPXMT13_OFB_IPV6_FLABEL:
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)!=0){
+					return -1;
+				}else{
+					struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+					uint32_t v;
+					memcpy(&v, pos+4, 4);
+					if(has_mask){
+						uint32_t m;
+						memcpy(&m, pos+8, 4);
+						if((IP6H_FL(hdr) & htonl(m)) != htonl(v)){
+							return -1;
+						}
+						count += bits_on(pos+8, 4);
+					}else{
+						if(IP6H_FL(hdr) != htonl(v)){
+							return -1;
+						}
+						count += 20;
+					}
+				}
+				break;
+
+				case OFPXMT13_OFB_ICMPV6_TYPE:
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)!=0){
+					return -1;
+				}else if(oob->ipv6_tp_type != 58){ // IP6_NEXTH_ICMPV6
+					return -1;
+				}else{
+					struct icmp6_hdr *hdr = (void*)(packet->data + oob->ipv6_tp_offset);
+					if(hdr->type != pos[4]){
+						return -1;
+					}
+				}
+				break;
+
+				case OFPXMT13_OFB_ICMPV6_CODE:
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)!=0){
+					return -1;
+				}else if(oob->ipv6_tp_type != 58){ // IP6_NEXTH_ICMPV6
+					return -1;
+				}else{
+					struct icmp6_hdr *hdr = (void*)(packet->data + oob->ipv6_tp_offset);
+					if(hdr->code != pos[4]){
+						return -1;
+					}
+				}
+				break;
+
+				case OFPXMT13_OFB_IPV6_ND_TARGET:
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)!=0){
+					return -1;
+				}else if(oob->ipv6_tp_type != 58){ // IP6_NEXTH_ICMPV6
+					return -1;
+				}else{
+					struct icmp6_hdr *hdr = (void*)(packet->data + oob->ipv6_tp_offset);
+					if(hdr->type != ICMP6_TYPE_NS && hdr->type != ICMP6_TYPE_NA){
+						return -1;
+					}
+					uint8_t *addr = (void*)(packet->data + oob->ipv6_tp_offset + 8);
+					if(has_mask){
+						for(int i=0; i<16; i++){
+							if((addr[i] & pos[20+i]) != pos[4+i]){
+								return -1;
+							}
+						}
+						count += bits_on(pos+20, 16);
+					}else{
+						for(int i=0; i<16; i++){
+							if(addr[i] != pos[4+i]){
+								return -1;
+							}
+						}
+						count += 128;
+					}
+				}
+				break;
+
+				case OFPXMT13_OFB_IPV6_ND_SLL:
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)!=0){
+					return -1;
+				}else if(oob->ipv6_tp_type != 58){ // IP6_NEXTH_ICMPV6
+					return -1;
+				}else{
+					struct icmp6_hdr *hdr = (void*)(packet->data + oob->ipv6_tp_offset);
+					if(hdr->type != ICMP6_TYPE_NS){
+						return -1;
+					}
+					uint8_t *opt = (void*)(packet->data + oob->ipv6_tp_offset + 24);
+					bool miss = true;
+					while(opt < packet->data + packet->length){
+						// Source Link-Layer Address 1
+						if(opt[0] == 1 && memcmp(opt+2, pos+4, 6)==0){
+							miss = false;
+						}
+						if(opt[1] == 0){
+							break;
+						}
+						opt += opt[1];
+					}
+					if(miss){
+						return -1;
+					}
+				}
+				break;
+
+				case OFPXMT13_OFB_IPV6_ND_TLL:
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)!=0){
+					return -1;
+				}else if(oob->ipv6_tp_type != 58){ // IP6_NEXTH_ICMPV6
+					return -1;
+				}else{
+					struct icmp6_hdr *hdr = (void*)(packet->data + oob->ipv6_tp_offset);
+					if(hdr->type != ICMP6_TYPE_NA){
+						return -1;
+					}
+					uint8_t *opt = (void*)(packet->data + oob->ipv6_tp_offset + 24);
+					bool miss = true;
+					while(opt < packet->data + packet->length){
+						// Target Link-Layer Address 2
+						if(opt[0] == 2 && memcmp(opt+2, pos+4, 6)==0){
+							miss = false;
+						}
+						if(opt[1] == 0){
+							break;
+						}
+						opt += opt[1];
+					}
+					if(miss){
+						return -1;
+					}
+				}
+				break;
 /*
  *	MPLS SHIM (RFC 5462)
  0                   1                   2                   3
@@ -1956,6 +2229,26 @@ int match_frame_by_oxm(const struct fx_packet *packet, const struct fx_packet_oo
 					}
 				}
 				break;
+				
+				case OFPXMT13_OFB_IPV6_EXTHDR:
+				if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)!=0){
+					return -1;
+				}else{
+					uint16_t v;
+					memcpy(&v, pos+4, 2);
+					if(has_mask){
+						uint16_t m;
+						memcpy(&m, pos+6, 2);
+						
+						if((oob->ipv6_exthdr & ntohs(m)) != ntohs(v)){
+							return -1;
+						}
+					}else{
+						if(oob->ipv6_exthdr != ntohs(v)){
+							return -1;
+						}
+					}
+				}
 			}
 		}
 	}
@@ -2190,24 +2483,52 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 			struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 			IPH_TOS_SET(hdr, (IPH_TOS(hdr)&0x03)|(o[4]<<2));
 			set_ip_checksum(packet->data, packet->length, oob->eth_type_offset + 2);
+		}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+			struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+			uint8_t tc = (IP6H_TC(hdr) & 0x03) | (o[4]<<2);
+			IP6H_VTCFL_SET(hdr, IP6H_V(hdr), tc, IP6H_FL(hdr));
 		}
 		break;
-		
+
 		case OXM_OF_IP_ECN:
 		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
 			struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 			IPH_TOS_SET(hdr, (IPH_TOS(hdr)&0xFC)|(o[4]&0x03));
 			set_ip_checksum(packet->data, packet->length, oob->eth_type_offset + 2);
+		}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
+			struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+			uint8_t tc = (IP6H_TC(hdr) & 0xFC) | (o[4] & 0x03);
+			IP6H_VTCFL_SET(hdr, IP6H_V(hdr), tc, IP6H_FL(hdr));
 		}
 		break;
 		
 		case OXM_OF_IP_PROTO:
 		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV4, 2)==0){
 			struct ip_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
-			if(IPH_V(hdr) == 6){
-				// replace 
+			IPH_PROTO_SET(hdr, o[4]);
+			set_ip_checksum(packet->data, packet->length, oob->eth_type_offset + 2);
+		}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2) == 0){
+			struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+			if((oob->ipv6_exthdr & OFPIEH13_NONEXT) != 0){
+				IP6H_NEXTH_SET(hdr, o[4]);
+			}else{
+				uint8_t nh = IP6H_NEXTH(hdr);
+				uint8_t *h = packet->data + oob->eth_type_offset + 2 + 40;
+				while(h < packet->data + packet->length){
+					if(nh != IP6_NEXTH_HOPBYHOP
+							&& nh != IP6_NEXTH_ROUTING
+							&& nh != IP6_NEXTH_FRAGMENT
+							&& nh != IP6_NEXTH_DESTOPTS
+							&& nh != 50 // IP6_NEXTH_ESP // RFC4303
+							&& nh != 51){ // IP6_NEXTH_AUTH // RFC4302
+						*h = o[4];
+						break;
+					}
+					nh = *h;
+					h += (*(h+1) + 1)*8;
+				}
 			}
-		} // TODO: add IPv6 support
+		}
 		break;
 		
 		case OXM_OF_IPV4_SRC:
@@ -2261,7 +2582,11 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 				set_ip_checksum(packet->data, packet->length, oob->eth_type_offset + 2);
 			}
 		}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-			// TODO
+			if(oob->ipv6_tp_type == IP_PROTO_TCP){
+				struct tcp_hdr *tcphdr = (void*)(packet->data + oob->ipv6_tp_offset);
+				memcpy(&tcphdr->src, o+4, 2); // src
+				set_ip6_checksum(packet->data, packet->length, oob);
+			}
 		}
 		break;
 		
@@ -2274,7 +2599,11 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 				set_ip_checksum(packet->data, packet->length, oob->eth_type_offset + 2);
 			}
 		}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-			// TODO
+			if(oob->ipv6_tp_type == IP_PROTO_TCP){
+				struct tcp_hdr *tcphdr = (void*)(packet->data + oob->ipv6_tp_offset);
+				memcpy(&tcphdr->dest, o+4, 2); // dst
+				set_ip6_checksum(packet->data, packet->length, oob);
+			}
 		}
 		break;
 		
@@ -2287,7 +2616,11 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 				set_ip_checksum(packet->data, packet->length, oob->eth_type_offset + 2);
 			}
 		}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-			// TODO
+			if(oob->ipv6_tp_type == IP_PROTO_UDP){
+				struct udp_hdr *udphdr = (void*)(packet->data + oob->ipv6_tp_offset);
+				memcpy(&udphdr->src, o+4, 2); // src
+				set_ip6_checksum(packet->data, packet->length, oob);
+			}
 		}
 		break;
 
@@ -2300,7 +2633,11 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 				set_ip_checksum(packet->data, packet->length, oob->eth_type_offset + 2);
 			}
 		}else if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2)==0){
-			// TODO
+			if(oob->ipv6_tp_type == IP_PROTO_UDP){
+				struct udp_hdr *udphdr = (void*)(packet->data + oob->ipv6_tp_offset);
+				memcpy(&udphdr->dest, o+4, 2); // src
+				set_ip6_checksum(packet->data, packet->length, oob);
+			}
 		}
 		break;
 
@@ -2382,6 +2719,53 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_ARP, 2)==0){
 			struct etharp_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
 			memcpy(hdr->dhwaddr.addr, o+4, 6);
+		}
+		break;
+
+		case OXM_OF_IPV6_SRC:
+		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2) == 0){
+			struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+			memcpy(&hdr->src.addr[0], o+4, 16);
+			set_ip6_checksum(packet->data, packet->length, oob);
+		}
+		break;
+		// xxx: OXM_OF_IPV6_SRC_W
+
+		case OXM_OF_IPV6_DST:
+		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2) == 0){
+			struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+			memcpy(&hdr->dest.addr[0], o+4, 16);
+			set_ip6_checksum(packet->data, packet->length, oob);
+		}
+		break;
+		// xxx: OXM_OF_IPV6_DST_W
+
+		case OXM_OF_IPV6_FLABEL:
+		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2) == 0){
+			struct ip6_hdr *hdr = (void*)(packet->data + oob->eth_type_offset + 2);
+			uint32_t v;
+			memcpy(&v, o+4, 4);
+			IP6H_VTCFL_SET(hdr, IP6H_V(hdr), IP6H_TC(hdr), ntohl(v));
+		}
+		break;
+
+		case OXM_OF_ICMPV6_TYPE:
+		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2) == 0){
+			if(oob->ipv6_tp_type == IP6_NEXTH_ICMP6){
+				uint8_t *hdr = packet->data + oob->ipv6_tp_offset;
+				hdr[0] = o[4];
+				set_ip6_checksum(packet->data, packet->length, oob);
+			}
+		}
+		break;
+
+		case OXM_OF_ICMPV6_CODE:
+		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2) == 0){
+			if(oob->ipv6_tp_type == IP6_NEXTH_ICMP6){
+				uint8_t *hdr = packet->data + oob->ipv6_tp_offset;
+				hdr[1] = o[4];
+				set_ip6_checksum(packet->data, packet->length, oob);
+			}
 		}
 		break;
 
@@ -3369,13 +3753,15 @@ void send_ofp13_flow_rem(){
 void ofp13_pipeline(struct fx_packet *packet, struct fx_packet_oob *oob){
 	int flow = lookup_fx_table(packet, oob, 0);
 	fx_table_counts[0].lookup++;
-	if(OF_Version == 4 && fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
-		// table-miss flow entry
-	} else {
-		fx_table_counts[0].matched++;
+	if(flow >= 0){
+		if(OF_Version == 4 && fx_flows[flow].priority == 0 && fx_flows[flow].oxm_length == 0){
+			// table-miss flow entry
+		} else {
+			fx_table_counts[0].matched++;
+		}
+		fx_flow_counts[flow].packet_count++;
+		fx_flow_counts[flow].byte_count += packet->length;
+		fx_flow_timeouts[flow].update = sys_get_ms();
+		execute_ofp13_flow(packet, oob, flow);
 	}
-	fx_flow_counts[flow].packet_count++;
-	fx_flow_counts[flow].byte_count += packet->length;
-	fx_flow_timeouts[flow].update = sys_get_ms();
-	execute_ofp13_flow(packet, oob, flow);
 }

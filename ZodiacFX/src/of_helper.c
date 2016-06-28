@@ -99,27 +99,80 @@ void set_ip_checksum(void *p_uc_data, uint16_t packet_size, uint16_t iphdr_offse
 		.addr = iphdr->dest.addr,
 	};
 	uint16_t payload_offset = iphdr_offset + IPH_HL(iphdr)*4;
-	struct pbuf *p = pbuf_alloc(PBUF_RAW, packet_size - payload_offset, PBUF_REF);
+	uint16_t payload_length = ntohs(IPH_LEN(iphdr)) - IPH_HL(iphdr)*4;
+	if(payload_offset + payload_length > packet_size){
+		return; // safety
+	}
+	struct pbuf *p = pbuf_alloc(PBUF_RAW, payload_length, PBUF_REF);
 	p->payload = (void*)((uintptr_t)p_uc_data + payload_offset);
 	if (IPH_PROTO(iphdr) == IP_PROTO_TCP) {
 		struct tcp_hdr *tcphdr = (void*)((uintptr_t)p_uc_data + payload_offset);
 		tcphdr->chksum = 0;
-		tcphdr->chksum = inet_chksum_pseudo(p, IP_PROTO_TCP, packet_size - payload_offset, &src, &dst);
+		tcphdr->chksum = inet_chksum_pseudo(p, IP_PROTO_TCP, payload_length, &src, &dst);
 	}
 	if (IPH_PROTO(iphdr) == IP_PROTO_UDP) {
 		struct udp_hdr *udphdr = (void*)((uintptr_t)p_uc_data + payload_offset);
 		udphdr->chksum = 0;
-		udphdr->chksum = inet_chksum_pseudo(p, IP_PROTO_UDP, packet_size - payload_offset, &src, &dst);
+		udphdr->chksum = inet_chksum_pseudo(p, IP_PROTO_UDP, payload_length, &src, &dst);
 	}
 	if (IPH_PROTO(iphdr) == IP_PROTO_ICMP) {
 		struct icmp_echo_hdr *icmphdr = (void*)((uintptr_t)p_uc_data + payload_offset);
 		icmphdr->chksum = 0;
-		icmphdr->chksum = inet_chksum(icmphdr, packet_size - payload_offset);
+		icmphdr->chksum = inet_chksum(icmphdr, payload_length);
 	}
 	pbuf_free(p);
 	
 	IPH_CHKSUM_SET(iphdr, 0);
 	IPH_CHKSUM_SET(iphdr, inet_chksum(iphdr, IPH_HL(iphdr)*4));
+}
+
+/*
+*	Updates the IPv6 Checksum after a SET FIELD operation.
+*	Returns the flow number if it matches.
+*
+*	@param *p_uc_data - Pointer to the buffer that contains the packet to be updated.
+*	@param packet_size - The size of the packet.
+*	@param iphdr_offset - IP Header offset.
+*	
+*/
+void set_ip6_checksum(void *p_uc_data, uint16_t packet_size, struct fx_packet_oob *oob)
+{
+	struct ip6_hdr *iphdr = (void*)((uintptr_t)p_uc_data + oob->eth_type_offset + 2);
+	struct ip6_addr src = {
+		.addr = {
+			iphdr->src.addr[0],
+			iphdr->src.addr[1],
+			iphdr->src.addr[2],
+			iphdr->src.addr[3],
+		}
+	};
+	struct ip6_addr dst = {
+		.addr = {
+			iphdr->dest.addr[0],
+			iphdr->dest.addr[1],
+			iphdr->dest.addr[2],
+			iphdr->dest.addr[3],
+		}
+	};
+	struct pbuf *p = pbuf_alloc(PBUF_RAW, packet_size - oob->ipv6_tp_offset, PBUF_REF);
+	p->payload = (void*)((uintptr_t)p_uc_data + oob->ipv6_tp_offset);
+	if (oob->ipv6_tp_type == IP6_NEXTH_TCP) {
+		struct tcp_hdr *tcphdr = (void*)((uintptr_t)p_uc_data + oob->ipv6_tp_offset);
+		tcphdr->chksum = 0;
+		tcphdr->chksum = ip6_chksum_pseudo(p, IP6_NEXTH_TCP, packet_size - oob->ipv6_tp_offset, &src, &dst);
+	}
+	if (oob->ipv6_tp_type == IP6_NEXTH_UDP) {
+		struct udp_hdr *udphdr = (void*)((uintptr_t)p_uc_data + oob->ipv6_tp_offset);
+		udphdr->chksum = 0;
+		udphdr->chksum = ip6_chksum_pseudo(p, IP6_NEXTH_UDP, packet_size - oob->ipv6_tp_offset, &src, &dst);
+	}
+	if (oob->ipv6_tp_type == IP6_NEXTH_ICMP6) {
+		uint8_t *hdr = p_uc_data + oob->ipv6_tp_offset;
+		hdr[2] = hdr[3] = 0;
+		uint16_t csum = ip6_chksum_pseudo(p, IP6_NEXTH_ICMP6, packet_size - oob->ipv6_tp_offset, &src, &dst);
+		memcpy(hdr+2, &csum, 2);
+	}
+	pbuf_free(p);
 }
 
 #define PREREQ_INVALID 1<<0

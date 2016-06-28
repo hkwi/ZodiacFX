@@ -102,6 +102,9 @@ struct fx_packet_oob { // in network byte order
 	// cache
 	uint8_t vlan[2]; // we use CFI bit for VLAN_PRESENT
 	uint16_t eth_type_offset;
+	uint16_t ipv6_exthdr; // ofp_ipv6exthdr_flags
+	uint8_t ipv6_tp_type;
+	uint16_t ipv6_tp_offset;
 	// pipeline
 	uint16_t action_set_oxm_length; // in host byte order
 	void *action_set_oxm; // malloc-ed oxm

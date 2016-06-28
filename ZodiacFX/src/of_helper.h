@@ -35,6 +35,7 @@
 #include <lwip/pbuf.h>
 
 void set_ip_checksum(void *p_uc_data, uint16_t packet_size, uint16_t iphdr_offset);
+void set_ip6_checksum(void *p_uc_data, uint16_t packet_size, struct fx_packet_oob *oob);
 
 // --- kwi ---
 bool oxm_strict_equals(const void*, int, const void*, int);
