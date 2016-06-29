@@ -2800,6 +2800,64 @@ static void set_field(struct fx_packet *packet, struct fx_packet_oob *oob, const
 		}
 		break;
 
+		case OXM_OF_IPV6_ND_TARGET:
+		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2) == 0){
+			if(oob->ipv6_tp_type == IP6_NEXTH_ICMP6){
+				struct icmp6_hdr *hdr = (void*)(packet->data + oob->ipv6_tp_offset);
+				if(hdr->type == ICMP6_TYPE_NS || hdr->type == ICMP6_TYPE_NA){
+					memcpy(packet->data + oob->ipv6_tp_offset + 8, o+4, 16);
+					set_ip6_checksum(packet->data, packet->length, oob);
+				}
+			}
+		}
+		break;
+
+		case OXM_OF_IPV6_ND_SLL:
+		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2) == 0){
+			if(oob->ipv6_tp_type == IP6_NEXTH_ICMP6){
+				struct icmp6_hdr *hdr = (void*)(packet->data + oob->ipv6_tp_offset);
+				if(hdr->type == ICMP6_TYPE_NS){
+					uint8_t *opt = (void*)(packet->data + oob->ipv6_tp_offset + 24);
+					while(opt < packet->data + packet->length){
+						// Source Link-Layer Address 1
+						if(opt[0] == 1){
+							memcpy(opt+2, o+4, 6);
+							set_ip6_checksum(packet->data, packet->length, oob);
+							break;
+						}
+						if(opt[1] == 0){
+							break;
+						}
+						opt += opt[1];
+					}
+				}
+			}
+		}
+		break;
+
+		case OXM_OF_IPV6_ND_TLL:
+		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_IPV6, 2) == 0){
+			if(oob->ipv6_tp_type == IP6_NEXTH_ICMP6){
+				struct icmp6_hdr *hdr = (void*)(packet->data + oob->ipv6_tp_offset);
+				if(hdr->type == ICMP6_TYPE_NA){
+					uint8_t *opt = (void*)(packet->data + oob->ipv6_tp_offset + 24);
+					while(opt < packet->data + packet->length){
+						// Target Link-Layer Address 2
+						if(opt[0] == 2){
+							memcpy(opt+2, o+4, 6);
+							set_ip6_checksum(packet->data, packet->length, oob);
+							break;
+						}
+						if(opt[1] == 0){
+							break;
+						}
+						opt += opt[1];
+					}
+				}
+			}
+		}
+		break;
+
 		case OXM_OF_MPLS_LABEL:
 		if(memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_MPLS, 2)==0
 				|| memcmp(packet->data + oob->eth_type_offset, ETH_TYPE_MPLS2, 2)==0){
@@ -2945,6 +3003,7 @@ static bool execute_ofp13_action(struct fx_packet *packet, struct fx_packet_oob 
 				struct ip_hdr *iphdr = (void*)(mpls + 4);
 				if(IPH_V(iphdr)==4){
 					IPH_TTL_SET(iphdr, mpls[3]);
+					set_ip_checksum(packet->data, packet->length, oob->eth_type_offset + 2 + 4);
 				}else if(IPH_V(iphdr)==6){
 					struct ip6_hdr *hdr = (void*)(mpls + 4);
 					IP6H_HOPLIM_SET(hdr, mpls[3]);
